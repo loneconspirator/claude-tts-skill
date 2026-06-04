@@ -1,0 +1,3 @@
+{
+  "_comment": "User-curated phonemizer substitutions. Replaces words that espeak drops silently. Match is case-insensitive, whole-word. Value is what gets sent to the phonemizer instead. This file is managed automatically by `/tts heal` — entries accumulate as you encounter pronunciation misses."
+}

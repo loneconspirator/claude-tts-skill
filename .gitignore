@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Personal pronunciation dict — managed at runtime by `/tts heal`.
+# Ship phonemizer-dict.example.json instead.
+phonemizer-dict.json
+
+# Runtime log of words espeak silently dropped.
+phonemizer-misses.log
