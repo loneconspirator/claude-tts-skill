@@ -59,11 +59,15 @@ Effective config = global values merged with project values (project wins on con
 - Voices: Aiden, Ryan, Vivian, Serena, Uncle_Fu, Dylan, Eric, Ono_Anna, Sohee
 - Requires Qwen3-TTS-MLX-WebUI-Enhanced running in Pinokio
 
+## First-run setup
+
+If any TTS command fails because the environment isn't ready (no venv at `~/.claude/tts-venv`, missing `kokoro-mlx`, SSL errors talking to Hugging Face, `FileNotFoundError` on a voice safetensors, etc.), **read `SETUP.md` in this same folder and follow it**. That file contains a health check and ordered repair recipes. Do not load it during normal command handling — only when the environment is broken or `/tts on` is being run for the first time on this machine.
+
 ## Commands
 
 Parse the user's arguments (available as `$ARGUMENTS`):
 
-- `/tts on` — Set `enabled: true`. Confirm with a spoken test.
+- `/tts on` — Set `enabled: true`. Confirm with a spoken test. If the spoken test errors out, fall through to `SETUP.md` before reporting failure.
 - `/tts off` — Set `enabled: false`. Confirm silently.
 - `/tts engine <kokoro|qwen|chatterbox>` — Switch TTS engine.
 - `/tts voice <name>` — Set voice (see engine-specific voices above).
