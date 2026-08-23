@@ -8,3 +8,7 @@ phonemizer-dict.json
 
 # Runtime log of words espeak silently dropped.
 phonemizer-misses.log
+
+# Audit trail of entries auto-heal added on its own. Derived from the personal
+# dict above, so it is personal data too.
+phonemizer-autoheal.json

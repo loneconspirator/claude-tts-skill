@@ -151,3 +151,13 @@ case "$engine" in
   chatterbox) speak_chatterbox ;;
   *)          echo "Unknown engine: $engine" >&2; exit 1 ;;
 esac
+
+# --- Auto-heal (opt-in) ---
+# Curate any words the phonemizer just failed on. Detached and silent: this
+# must never delay speech or surface output on the caller's stderr. The script
+# no-ops immediately unless auto_heal is enabled, and takes a lock so the
+# several calls a multi-sentence read produces collapse into one run.
+if [ -x "$SCRIPT_DIR/tts-autoheal.sh" ]; then
+  "$SCRIPT_DIR/tts-autoheal.sh" >/dev/null 2>&1 </dev/null &
+  disown 2>/dev/null || true
+fi
