@@ -417,6 +417,21 @@ def main() -> None:
     finally:
         log("daemon exiting")
         state.shutdown.set()
+
+        # Let the play worker close its OutputStream before the interpreter
+        # exits. Both the worker's stream.close() and interpreter teardown
+        # reach into PortAudio's C state; racing them dereferences a freed
+        # pointer and segfaults, which macOS reports as "Python quit
+        # unexpectedly" seconds after a clean shutdown. Unblock the worker
+        # with a sentinel rather than waiting out its 0.5s queue timeout.
+        try:
+            state.play_q.put(None)
+        except Exception:
+            pass
+        t_play.join(timeout=5)
+        if t_play.is_alive():
+            log("play worker did not exit within 5s")
+
         try:
             os.unlink(SOCKET_PATH)
         except OSError:
