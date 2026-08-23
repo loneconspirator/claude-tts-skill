@@ -5,6 +5,7 @@ Unix socket and exits. Used by speak.sh and the queue helper scripts.
 
 Usage:
   tts_enqueue.py enqueue "<text>" --voice af_heart --speed 1.0
+  tts_enqueue.py pause <seconds>
   tts_enqueue.py flush
   tts_enqueue.py stop
   tts_enqueue.py ping
@@ -113,6 +114,9 @@ def main() -> None:
     ap_enq.add_argument("--voice", default="af_heart")
     ap_enq.add_argument("--speed", type=float, default=1.0)
 
+    ap_pause = sub.add_parser("pause")
+    ap_pause.add_argument("seconds", type=float)
+
     sub.add_parser("flush")
     sub.add_parser("stop")
     sub.add_parser("ping")
@@ -138,6 +142,8 @@ def main() -> None:
             "voice": args.voice,
             "speed": args.speed,
         }
+    elif args.cmd == "pause":
+        msg = {"cmd": "pause", "seconds": args.seconds}
     else:
         msg = {"cmd": args.cmd}
     print(json.dumps(send_and_recv(msg)))
