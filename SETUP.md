@@ -16,7 +16,7 @@ Otherwise, do **not** load this file — `SKILL.md` is sufficient for everyday c
 All four of these must be true:
 
 1. **Venv exists** at `~/.claude/tts-venv/` with a Python 3.10–3.12 interpreter (Kokoro-mlx does **not** support 3.13+).
-2. **Packages installed** in that venv: `kokoro-mlx`, `soundfile`, `numpy`. On corporate networks doing TLS interception (Zscaler, Netskope, etc.) also: `pip-system-certs`.
+2. **Packages installed** in that venv: `kokoro-mlx`, `soundfile`, `numpy`, `sounddevice`. On corporate networks doing TLS interception (Zscaler, Netskope, etc.) also: `pip-system-certs`.
 3. **Kokoro model + voices downloaded** to `~/.cache/huggingface/hub/models--mlx-community--Kokoro-82M-bf16/`. The `voices/` subdirectory inside the snapshot must contain ~54 `.safetensors` files. `KokoroModel.from_pretrained` only pulls the model weights — voices have to be fetched separately via `snapshot_download` with `allow_patterns=['voices/*.safetensors']`.
 4. **Global config exists** at `~/.claude/tts-config.json` with at minimum `{"enabled": true}`.
 
@@ -36,7 +36,7 @@ Run these in order; stop at the first failure and fix it.
 # Expect: Python 3.10.x / 3.11.x / 3.12.x
 
 # 2. Core packages import
-~/.claude/tts-venv/bin/python -c "import kokoro_mlx, soundfile, numpy; print('ok')"
+~/.claude/tts-venv/bin/python -c "import kokoro_mlx, soundfile, numpy, sounddevice; print('ok')"
 
 # 3. Voices present
 ls ~/.cache/huggingface/hub/models--mlx-community--Kokoro-82M-bf16/snapshots/*/voices/*.safetensors 2>/dev/null | wc -l
@@ -65,7 +65,7 @@ brew install python@3.12
 # Create the venv. Use python3.12 explicitly — `python3` may point at 3.13+.
 /opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.claude/tts-venv
 ~/.claude/tts-venv/bin/pip install --upgrade pip
-~/.claude/tts-venv/bin/pip install kokoro-mlx soundfile numpy
+~/.claude/tts-venv/bin/pip install kokoro-mlx soundfile numpy sounddevice
 
 # Download the voices (model.from_pretrained alone doesn't fetch them):
 ~/.claude/tts-venv/bin/python -c "

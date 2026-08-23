@@ -6,6 +6,7 @@ playback so a paragraph fed one sentence at a time streams smoothly.
 
 Protocol (one JSON object per line on the socket, newline-terminated):
   {"cmd": "enqueue", "text": "...", "voice": "...", "speed": 1.0}
+  {"cmd": "pause", "seconds": 0.2}  -> insert a silent gap (ordered with text)
   {"cmd": "flush"}    -> drop everything pending
   {"cmd": "stop"}     -> stop current playback + flush
   {"cmd": "ping"}     -> reply {"ok": true}
@@ -32,6 +33,11 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+try:
+    import sounddevice as sd
+except Exception:  # missing wheel / no PortAudio — fall back to afplay
+    sd = None
 
 # Reuse the resolver/segment logic from the standalone script so behavior
 # (dict lookups, compound splits, miss logging) stays identical.
@@ -62,6 +68,8 @@ class State:
         self.last_active = time.time()
         self.lock = threading.Lock()
         self.current_player: subprocess.Popen | None = None
+        self.playing = False
+        self.stop_current = threading.Event()
         self.shutdown = threading.Event()
 
     def touch(self) -> None:
@@ -98,48 +106,164 @@ def synth_worker(
             continue
         if job is None:
             break
-        text, voice, speed = job["text"], job["voice"], job["speed"]
         state.touch()
         try:
-            segments = build_segments(text, phon)
-            audio = synthesize(segments, model, vm, voice, speed)
-            f = tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False, prefix="tts_daemon_"
-            )
-            sf.write(f.name, audio, 24000)
-            f.close()
-            state.play_q.put(f.name)
-            log(f"synth OK ({len(text)} chars) -> {f.name}")
+            if job.get("kind") == "pause":
+                seconds = max(0.0, float(job.get("seconds", 0.0)))
+                state.play_q.put(("pause", seconds))
+                log(f"pause {seconds:.2f}s queued")
+            else:
+                text, voice, speed = job["text"], job["voice"], job["speed"]
+                segments = build_segments(text, phon)
+                audio = synthesize(segments, model, vm, voice, speed)
+                state.play_q.put(("audio", np.asarray(audio, dtype=np.float32)))
+                log(f"synth OK ({len(text)} chars, {len(audio) / 24000:.2f}s)")
         except Exception as e:  # one bad sentence shouldn't kill the daemon
-            log(f"synth ERROR: {e!r} for text={text!r}")
+            log(f"synth ERROR: {e!r} for job={job!r}")
         finally:
             state.touch()
+
+
+PLAY_BLOCK = 4800  # 0.2s at 24kHz — stop-check granularity
 
 
 def play_worker(state: State) -> None:
+    """Play queued clips through one persistent output stream.
+
+    A fresh afplay process per clip costs ~1.5-2s of dead air each (device
+    open/close), which turned the 0.1-0.3s inter-sentence pauses into
+    multi-second gaps. Writing samples into a single long-lived stream is
+    gapless; pauses become zero-fill of exactly the requested length.
+    Falls back to the old afplay-per-clip path if sounddevice is missing.
+    """
+    stream = None
+    stream_device = None
+
+    def current_output_device():
+        """Name of the current default output, or None if unknown.
+
+        AirPods (and any Bluetooth output) disconnecting or reconnecting
+        changes the default device underneath us. A stream opened against the
+        old device does not necessarily raise on write — it can silently
+        swallow audio — so compare devices rather than waiting for an error.
+
+        Asked via a short-lived subprocess: refreshing PortAudio's device list
+        in-process requires _terminate()/_initialize(), which invalidates the
+        pointer of any stream we already hold ("Invalid stream pointer").
+        """
+        try:
+            out = subprocess.run(
+                [
+                    sys.executable, "-c",
+                    "import sounddevice as sd;"
+                    "d = sd.query_devices(kind='output');"
+                    "print(d['name'])",
+                ],
+                capture_output=True, text=True, timeout=5,
+            )
+            name = out.stdout.strip()
+            return name or None
+        except Exception:
+            return None
+
+    def ensure_stream(check_device: bool):
+        nonlocal stream, stream_device
+        # Querying the device costs ~160ms, which would stall the 0.1-0.3s
+        # inter-sentence gaps this stream exists to keep tight. A device can
+        # only change while nothing is playing, so the caller only asks for a
+        # check when starting a fresh utterance after an idle gap.
+        device = current_output_device() if check_device else stream_device
+        # Only act on a *known* change: a failed lookup (None) must not force a
+        # needless reopen, and must not be recorded as the stream's device.
+        if stream is not None and device is not None and device != stream_device:
+            log(f"output device changed {stream_device} -> {device}, reopening")
+            try:
+                stream.close()
+            except Exception:
+                pass
+            stream = None
+        if stream is None:
+            stream = sd.OutputStream(
+                samplerate=24000, channels=1, dtype="float32"
+            )
+            stream.start()
+            stream_device = device
+        return stream
+
+    # An empty queue means playback has stopped, which is the only window in
+    # which the output device can change. Re-check the device on the next clip
+    # after any such gap; mid-utterance clips skip the check and stay gapless.
+    was_idle = True
+
     while not state.shutdown.is_set():
         try:
-            path = state.play_q.get(timeout=0.5)
+            item = state.play_q.get(timeout=0.5)
         except queue.Empty:
+            was_idle = True
             continue
-        if path is None:
+        if item is None:
             break
         state.touch()
+        kind, payload = item
+        if kind == "pause":
+            audio = np.zeros(int(payload * 24000), dtype=np.float32)
+        else:
+            audio = payload
+        if not len(audio):
+            continue
+        state.stop_current.clear()
+        with state.lock:
+            state.playing = True
         try:
-            proc = subprocess.Popen(["afplay", path])
-            with state.lock:
-                state.current_player = proc
-            proc.wait()
+            if sd is None:
+                _play_afplay(state, audio)
+            else:
+                s = ensure_stream(check_device=was_idle)
+                was_idle = False
+                for i in range(0, len(audio), PLAY_BLOCK):
+                    if state.stop_current.is_set():
+                        break
+                    s.write(np.ascontiguousarray(audio[i:i + PLAY_BLOCK]))
         except Exception as e:
             log(f"play ERROR: {e!r}")
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                stream = None
+                stream_device = None
         finally:
             with state.lock:
-                state.current_player = None
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+                state.playing = False
             state.touch()
+
+    if stream is not None:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _play_afplay(state: State, audio: np.ndarray) -> None:
+    """Legacy playback: write a temp wav and shell out to afplay."""
+    f = tempfile.NamedTemporaryFile(
+        suffix=".wav", delete=False, prefix="tts_daemon_"
+    )
+    sf.write(f.name, audio, 24000)
+    f.close()
+    try:
+        proc = subprocess.Popen(["afplay", f.name])
+        with state.lock:
+            state.current_player = proc
+        proc.wait()
+    finally:
+        with state.lock:
+            state.current_player = None
+        try:
+            os.unlink(f.name)
+        except OSError:
+            pass
 
 
 def drain_queue(q: queue.Queue) -> list:
@@ -155,18 +279,17 @@ def drain_queue(q: queue.Queue) -> list:
 def handle_flush(state: State) -> None:
     """Drop everything pending. Currently-playing audio keeps playing."""
     drain_queue(state.synth_q)
-    for path in drain_queue(state.play_q):
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    drain_queue(state.play_q)
 
 
 def handle_stop(state: State) -> None:
     """Flush, plus kill whatever's playing right now."""
     handle_flush(state)
     with state.lock:
+        playing = state.playing
         proc = state.current_player
+    if playing:
+        state.stop_current.set()
     if proc and proc.poll() is None:
         proc.terminate()
 
@@ -187,6 +310,13 @@ class Handler(socketserver.StreamRequestHandler):
                     "text": msg.get("text", ""),
                     "voice": msg.get("voice", "af_heart"),
                     "speed": float(msg.get("speed", 1.0)),
+                })
+                self.state.touch()
+                self.wfile.write(b'{"ok": true}\n')
+            elif cmd == "pause":
+                self.state.synth_q.put({
+                    "kind": "pause",
+                    "seconds": float(msg.get("seconds", 0.0)),
                 })
                 self.state.touch()
                 self.wfile.write(b'{"ok": true}\n')
@@ -221,7 +351,7 @@ def idle_watchdog(state: State, server: Server) -> None:
         busy = (
             not state.synth_q.empty()
             or not state.play_q.empty()
-            or state.current_player is not None
+            or state.playing
         )
         if busy:
             state.touch()
