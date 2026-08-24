@@ -123,6 +123,21 @@ if [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
   exit 0
 fi
 
+# Skip a turn we have already spoken. The hook fires on every Stop, but not
+# every Stop follows a new assistant message — a bash command run from the
+# prompt ends a turn without appending one, leaving the newest assistant entry
+# in the transcript unchanged. Without this the same reply is summarized and
+# spoken again, at the cost of another model call.
+LAST_HASH_FILE="/tmp/tts-stop-speak.last"
+TEXT_HASH="$(printf %s "$TEXT" | shasum 2>/dev/null | cut -d' ' -f1)"
+if [ -n "$TEXT_HASH" ]; then
+  if [ "$TEXT_HASH" = "$(cat "$LAST_HASH_FILE" 2>/dev/null)" ]; then
+    echo "$(date '+%H:%M:%S') skipped: already spoke this turn" >> "$LOG"
+    exit 0
+  fi
+  printf %s "$TEXT_HASH" > "$LAST_HASH_FILE" 2>/dev/null || true
+fi
+
 # --- Condense to speech via headless Haiku ---
 # Falls back to the raw text if the model call fails, so a transient error
 # means slightly worse audio rather than silence.
