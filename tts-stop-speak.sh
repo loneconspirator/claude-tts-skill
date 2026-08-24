@@ -20,9 +20,13 @@ LOG="/tmp/tts-stop-speak.log"
 #
 # The payload moves in argv, not on a pipe: nohup points stdin at /dev/null,
 # so a piped payload never reaches the child.
+# Resolve $0 before re-exec: nohup cannot find a relative path if the hook is
+# invoked from a different cwd, and the failure is silent.
+SELF="$SKILL_DIR/$(basename "$0")"
+
 if [ -z "${TTS_STOP_DETACHED:-}" ]; then
   PAYLOAD="$(cat)"
-  TTS_STOP_DETACHED=1 nohup "$0" "$PAYLOAD" >/dev/null 2>&1 &
+  TTS_STOP_DETACHED=1 nohup bash "$SELF" "$PAYLOAD" >/dev/null 2>&1 &
   exit 0
 fi
 
