@@ -79,63 +79,21 @@ except Exception: print(False)
   exit 0
 fi
 
-# --- Extract the full final assistant turn ---
-# last_assistant_message in the payload holds only the trailing text block when
-# a response is split by tool calls, so read the transcript instead and join
-# every text block in the last assistant turn.
-TEXT="$(printf %s "$PAYLOAD" | python3 -c "
-import json, sys
-
-try:
-    payload = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-
-path = payload.get('transcript_path')
-if not path:
-    print(payload.get('last_assistant_message', ''))
-    sys.exit(0)
-
-try:
-    lines = open(path).read().splitlines()
-except Exception:
-    print(payload.get('last_assistant_message', ''))
-    sys.exit(0)
-
-for ln in reversed(lines):
-    try:
-        d = json.loads(ln)
-    except Exception:
-        continue
-    if d.get('type') != 'assistant':
-        continue
-    blocks = d.get('message', {}).get('content', [])
-    texts = [c.get('text', '') for c in blocks if c.get('type') == 'text']
-    if not texts:
-        continue
-    print('\n'.join(texts))
-    break
-" 2>/dev/null)"
+# --- Extract the assistant text not yet spoken ---
+# The extractor prints the text on stdout and the uuid to record as the new
+# watermark on stderr. The watermark is only committed once the text has
+# actually been handed to speak.sh, so a crash or a failed condense leaves the
+# text pending for the next turn rather than silently swallowing it.
+WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid"
+EXTRACT_ERR="$(mktemp -t tts-extract)"
+TEXT="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/extract_unspoken.py" 2>"$EXTRACT_ERR")"
+NEW_MARK="$(cat "$EXTRACT_ERR" 2>/dev/null | tr -d '\n')"
+rm -f "$EXTRACT_ERR"
 
 # Nothing to say, or too short to be worth a model call and 8s of latency.
 CHARS="${#TEXT}"
 if [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
   exit 0
-fi
-
-# Skip a turn we have already spoken. The hook fires on every Stop, but not
-# every Stop follows a new assistant message — a bash command run from the
-# prompt ends a turn without appending one, leaving the newest assistant entry
-# in the transcript unchanged. Without this the same reply is summarized and
-# spoken again, at the cost of another model call.
-LAST_HASH_FILE="/tmp/tts-stop-speak.last"
-TEXT_HASH="$(printf %s "$TEXT" | shasum 2>/dev/null | cut -d' ' -f1)"
-if [ -n "$TEXT_HASH" ]; then
-  if [ "$TEXT_HASH" = "$(cat "$LAST_HASH_FILE" 2>/dev/null)" ]; then
-    echo "$(date '+%H:%M:%S') skipped: already spoke this turn" >> "$LOG"
-    exit 0
-  fi
-  printf %s "$TEXT_HASH" > "$LAST_HASH_FILE" 2>/dev/null || true
 fi
 
 # --- Condense to speech via headless Haiku ---
@@ -163,6 +121,11 @@ if [ "${#SUMMARY}" -gt "$CHARS" ]; then
 fi
 
 echo "$(date '+%H:%M:%S') ${CHARS}ch -> ${#SUMMARY}ch via $SUMMARY_MODEL" >> "$LOG"
+# Commit the watermark only now that we are certain we will speak this text.
+if [ -n "$NEW_MARK" ]; then
+  printf %s "$NEW_MARK" > "$WATERMARK_FILE" 2>/dev/null || true
+fi
+
 "$SKILL_DIR/speak.sh" "$SUMMARY"
 
 exit 0
