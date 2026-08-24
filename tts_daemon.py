@@ -54,6 +54,15 @@ PID_PATH = "/tmp/tts-daemon.pid"
 LOG_PATH = "/tmp/tts-daemon.log"
 IDLE_TIMEOUT = 300  # seconds with no work before the daemon shuts itself down
 
+# Interpreter used for the out-of-process output-device query. sys.executable
+# is wrong here: this venv's bin/python is a symlink to Homebrew's framework
+# build, which rewrites sys.executable to the *base* interpreter. That base
+# python has no sounddevice, so the query would fail every time, return None,
+# and silently disable device-change detection (audio then plays into a stale
+# stream after AirPods disconnect). Point at the venv binary explicitly.
+_VENV_PYTHON = Path.home() / ".claude" / "tts-venv" / "bin" / "python"
+DEVICE_QUERY_PYTHON = str(_VENV_PYTHON if _VENV_PYTHON.exists() else sys.executable)
+
 
 def log(msg: str) -> None:
     with open(LOG_PATH, "a") as f:
@@ -154,7 +163,7 @@ def play_worker(state: State) -> None:
         try:
             out = subprocess.run(
                 [
-                    sys.executable, "-c",
+                    DEVICE_QUERY_PYTHON, "-c",
                     "import sounddevice as sd;"
                     "d = sd.query_devices(kind='output');"
                     "print(d['name'])",
