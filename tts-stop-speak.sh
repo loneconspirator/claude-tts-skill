@@ -90,9 +90,36 @@ TEXT="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/extract_unspoken.py" 2>"$EXTR
 NEW_MARK="$(cat "$EXTRACT_ERR" 2>/dev/null | tr -d '\n')"
 rm -f "$EXTRACT_ERR"
 
+# The extractor flags a turn that ended by asking the user something. Strip
+# the marker before anything else sees it -- it is a channel between the
+# extractor and this check, not text to speak.
+IS_QUESTION=no
+if [ "${TEXT%%$'\n'*}" = "[[TTS_QUESTION]]" ]; then
+  IS_QUESTION=yes
+  TEXT="${TEXT#*$'\n'}"
+fi
+
 # Nothing to say, or too short to be worth a model call and 8s of latency.
+# Questions skip the floor: a one-line question is the case most worth
+# speaking, and it is exactly the case the floor would filter out.
 CHARS="${#TEXT}"
-if [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
+if [ "$IS_QUESTION" = "no" ] && [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
+  exit 0
+fi
+if [ -z "${TEXT// }" ]; then
+  exit 0
+fi
+
+# A short question is already speech: the extractor built it from the
+# question and its option labels, with the screen-only detail dropped. Sending
+# it to the condenser costs several seconds and risks it coming back reworded
+# or padded, so speak it as-is.
+if [ "$IS_QUESTION" = "yes" ] && [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
+  echo "$(date '+%H:%M:%S') question ${CHARS}ch, speaking verbatim" >> "$LOG"
+  if [ -n "$NEW_MARK" ]; then
+    printf %s "$NEW_MARK" > "$WATERMARK_FILE" 2>/dev/null || true
+  fi
+  "$SKILL_DIR/speak.sh" "$TEXT"
   exit 0
 fi
 

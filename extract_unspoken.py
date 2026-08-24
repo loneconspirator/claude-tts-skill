@@ -25,6 +25,52 @@ from pathlib import Path
 
 WATERMARK = Path("/tmp/tts-stop-speak.spoken-uuid")
 
+# Tool calls that mean "the turn ended because Claude needs the user".
+# Their prompt text lives in the tool_use input, not in a text block, so
+# without this the most explicit ask-the-user signal is the one thing the
+# extractor cannot see.
+QUESTION_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
+
+# Marker line prepended to extracted question text. The Stop hook greps for
+# this to decide whether to bypass summary_min_chars -- a short question is
+# exactly what should survive the floor, not what should be filtered by it.
+QUESTION_MARKER = "[[TTS_QUESTION]]"
+
+
+def question_text(block: dict) -> str:
+    """Render a question tool_use block as speakable text.
+
+    Only the question and the short option labels are used. Option
+    descriptions are written for the screen -- long, full of file paths and
+    identifiers -- and reading them aloud is worse than not speaking at all.
+    """
+    inp = block.get("input") or {}
+    name = block.get("name")
+
+    if name == "ExitPlanMode":
+        # The plan itself is long markdown; the condenser handles it, but the
+        # spoken point is that approval is being requested.
+        plan = (inp.get("plan") or "").strip()
+        head = "Asking to approve a plan before starting work."
+        return f"{head}\n\n{plan}" if plan else head
+
+    out = []
+    for q in inp.get("questions") or []:
+        if not isinstance(q, dict):
+            continue
+        text = (q.get("question") or "").strip()
+        if not text:
+            continue
+        labels = [
+            (o.get("label") or "").strip()
+            for o in (q.get("options") or [])
+            if isinstance(o, dict) and (o.get("label") or "").strip()
+        ]
+        if labels:
+            text += " Options are: " + "; ".join(labels) + "."
+        out.append(text)
+    return "\n".join(out)
+
 
 def main() -> None:
     try:
@@ -94,17 +140,24 @@ def main() -> None:
 
     parts = []
     newest_assistant = ""
+    saw_question = False
     for uid in tail:
         d = entries[uid]
         if d.get("type") != "assistant":
             continue
         newest_assistant = uid
         blocks = d.get("message", {}).get("content", [])
-        texts = [
-            b.get("text", "")
-            for b in blocks
-            if isinstance(b, dict) and b.get("type") == "text"
-        ]
+        texts = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
+                texts.append(b.get("text", ""))
+            elif b.get("type") == "tool_use" and b.get("name") in QUESTION_TOOLS:
+                q = question_text(b)
+                if q:
+                    texts.append(q)
+                    saw_question = True
         texts = [t for t in texts if t.strip()]
         if texts:
             parts.append("\n".join(texts))
@@ -115,7 +168,13 @@ def main() -> None:
     if newest_assistant:
         new_mark = chain[-1]
 
-    print("\n\n".join(parts) if parts else fallback)
+    body = "\n\n".join(parts) if parts else fallback
+    # The marker rides on stdout ahead of the text so the caller can make the
+    # min-chars decision without re-parsing the transcript. The Stop hook
+    # strips it before the text reaches the condenser.
+    if saw_question and body.strip():
+        body = f"{QUESTION_MARKER}\n{body}"
+    print(body)
     print(new_mark, file=sys.stderr)
 
 
