@@ -43,6 +43,29 @@ ref_audio="${REF_AUDIO:-$HOME/.claude/tts-reference-voice.wav}"
 KOKORO_VENV="${KOKORO_PYTHON:-$KOKORO_VENV_DEFAULT}"
 CHATTERBOX_PYTHON="${CHATTERBOX_PYTHON:-$CHATTERBOX_PYTHON_DEFAULT}"
 
+# --- Log what was spoken ---
+# When speech comes out wrong the audio is gone, and the daemon log records
+# only character counts. Keep the exact text alongside the settings that
+# produced it, plus who called us, so a bad read can be traced back to its
+# source (a hook, a Raycast trigger, a stale queue) after the fact.
+#
+# Rotated at 1MB to stay bounded. Set TTS_NO_LOG=1 to skip.
+SPEAK_LOG="${TTS_SPEAK_LOG:-/tmp/tts-speak.log}"
+if [ "${TTS_NO_LOG:-}" != "1" ]; then
+  if [ -f "$SPEAK_LOG" ] && [ "$(wc -c <"$SPEAK_LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+    mv -f "$SPEAK_LOG" "$SPEAK_LOG.1" 2>/dev/null || true
+  fi
+  # Parent process name: which script or hook invoked this call.
+  _caller="$(ps -o comm= -p "$PPID" 2>/dev/null | tail -1 | sed 's/^-//')"
+  _caller="${_caller:-unknown}"
+  {
+    printf '%s [%s] engine=%s voice=%s speed=%s cwd=%s chars=%s\n' \
+      "$(date '+%Y-%m-%d %H:%M:%S')" "$_caller" "$engine" "$voice" "$speed" \
+      "$PWD" "${#TEXT}"
+    printf '  text: %s\n' "$TEXT"
+  } >> "$SPEAK_LOG" 2>/dev/null || true
+fi
+
 # --- Kokoro: enqueue to the daemon so multiple calls stream smoothly ---
 # Set TTS_NO_QUEUE=1 to bypass the daemon and synthesize inline (old behavior).
 speak_kokoro() {
