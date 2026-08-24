@@ -93,17 +93,8 @@ fi
 # What engine is active? Streaming + pauses only work for kokoro (the daemon
 # path). Qwen and Chatterbox synthesize the whole thing inline, so just hand
 # them the full text and let speak.sh do its thing.
-ENGINE="$(python3 -c "
-import json, os
-g, p = {}, {}
-try:
-    with open(os.path.expanduser('~/.claude/tts-config.json')) as f: g = json.load(f)
-except Exception: pass
-try:
-    with open('.claude/tts-config.json') as f: p = json.load(f)
-except Exception: pass
-print({**g, **p}.get('engine', 'kokoro'))
-")"
+eval "$(python3 "$SKILL_DIR/tts_config.py" engine 2>/dev/null)"
+ENGINE="${ENGINE:-kokoro}"
 
 if [ "$ENGINE" != "kokoro" ]; then
   "$SKILL_DIR/speak.sh" "$TEXT"

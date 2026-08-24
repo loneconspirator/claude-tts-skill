@@ -5,26 +5,13 @@
 
 set -euo pipefail
 
-GLOBAL_CFG="$HOME/.claude/tts-config.json"
-PROJECT_CFG=".claude/tts-config.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Read engine + kokoro_python from config ---
-eval "$(python3 -c "
-import json
-g, p = {}, {}
-try:
-    with open('$GLOBAL_CFG') as f: g = json.load(f)
-except: pass
-try:
-    with open('$PROJECT_CFG') as f: p = json.load(f)
-except: pass
-cfg = {**g, **p}
-print(f'engine={cfg.get(\"engine\", \"kokoro\")}')
-print(f'kokoro_python={cfg.get(\"kokoro_python\", \"\")}')
-" 2>/dev/null)"
+eval "$(python3 "$SCRIPT_DIR/tts_config.py" engine kokoro_python 2>/dev/null)"
 
-engine="${engine:-kokoro}"
-KOKORO_VENV="${kokoro_python:-$HOME/.claude/tts-venv/bin/python}"
+engine="${ENGINE:-kokoro}"
+KOKORO_VENV="${KOKORO_PYTHON:-$HOME/.claude/tts-venv/bin/python}"
 
 case "$engine" in
   kokoro)

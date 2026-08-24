@@ -11,8 +11,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-GLOBAL_CFG="$HOME/.claude/tts-config.json"
-PROJECT_CFG=".claude/tts-config.json"
 KOKORO_VENV_DEFAULT="$HOME/.claude/tts-venv/bin/python"
 CHATTERBOX_PYTHON_DEFAULT="$HOME/pinokio/api/Qwen3-TTS-MLX-WebUI-Enhanced.git/app/env/bin/python3"
 
@@ -26,38 +24,24 @@ if [ -z "$TEXT" ]; then
   exit 1
 fi
 
-# --- Merge config (project overrides global) ---
-read_config() {
-  python3 -c "
-import json, sys
+# --- Merge config (nearest project config overrides global) ---
+# tts_config.py owns the lookup rules, including the walk up the directory
+# tree. It emits uppercase KEY=value; the lowercase names below are what the
+# rest of this script expects.
+eval "$(python3 "$SCRIPT_DIR/tts_config.py" \
+  engine voice speed instruct api_url exaggeration cfg_weight ref_audio \
+  kokoro_python chatterbox_python 2>/dev/null)"
 
-g, p = {}, {}
-try:
-    with open('$GLOBAL_CFG') as f: g = json.load(f)
-except: pass
-try:
-    with open('$PROJECT_CFG') as f: p = json.load(f)
-except: pass
-
-cfg = {**g, **p}
-# Output as key=value for shell consumption
-for k in ('engine', 'voice', 'speed', 'instruct', 'api_url', 'exaggeration', 'cfg_weight', 'ref_audio', 'kokoro_python', 'chatterbox_python'):
-    print(f'{k}={cfg.get(k, \"\")}')
-"
-}
-
-eval "$(read_config)"
-
-engine="${engine:-kokoro}"
-voice="${voice:-af_heart}"
-speed="${speed:-1.0}"
-instruct="${instruct:-}"
-api_url="${api_url:-http://127.0.0.1:42003}"
-exaggeration="${exaggeration:-0.5}"
-cfg_weight="${cfg_weight:-0.5}"
-ref_audio="${ref_audio:-$HOME/.claude/tts-reference-voice.wav}"
-KOKORO_VENV="${kokoro_python:-$KOKORO_VENV_DEFAULT}"
-CHATTERBOX_PYTHON="${chatterbox_python:-$CHATTERBOX_PYTHON_DEFAULT}"
+engine="${ENGINE:-kokoro}"
+voice="${VOICE:-af_heart}"
+speed="${SPEED:-1.0}"
+instruct="${INSTRUCT:-}"
+api_url="${API_URL:-http://127.0.0.1:42003}"
+exaggeration="${EXAGGERATION:-0.5}"
+cfg_weight="${CFG_WEIGHT:-0.5}"
+ref_audio="${REF_AUDIO:-$HOME/.claude/tts-reference-voice.wav}"
+KOKORO_VENV="${KOKORO_PYTHON:-$KOKORO_VENV_DEFAULT}"
+CHATTERBOX_PYTHON="${CHATTERBOX_PYTHON:-$CHATTERBOX_PYTHON_DEFAULT}"
 
 # --- Kokoro: enqueue to the daemon so multiple calls stream smoothly ---
 # Set TTS_NO_QUEUE=1 to bypass the daemon and synthesize inline (old behavior).

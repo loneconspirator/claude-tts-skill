@@ -9,31 +9,35 @@
 # transcript, sends it to a headless Haiku to strip code/paths/markdown, and
 # pipes the result to speak.sh.
 
-PAYLOAD="$(cat)"
 SKILL_DIR="$HOME/.claude/skills/tts"
 LOG="/tmp/tts-stop-speak.log"
 
-# --- Config (global + project merge, project wins) ---
-# summary_model / summary_prompt / summary_min_chars are read here so the
-# condenser can be retargeted at a faster model without touching this script.
-# Emitted as shell assignments and eval'd, same pattern as speak.sh.
-# The heredoc is quoted ('PY') so the shell passes this through verbatim —
-# the dict-merge braces and nested quotes below do not survive `python3 -c`.
-eval "$(python3 <<'PY' 2>/dev/null
-import json, os, shlex
+# Re-exec detached, then return immediately so the hook does not block the
+# turn. The condense step costs several seconds — long enough that a hook
+# timeout, or the harness reaping the hook's process group on exit, would kill
+# it mid-flight. Backgrounding from settings.json with a trailing "&" is not
+# enough: that child is still in the hook's process group.
+#
+# The payload moves in argv, not on a pipe: nohup points stdin at /dev/null,
+# so a piped payload never reaches the child.
+if [ -z "${TTS_STOP_DETACHED:-}" ]; then
+  PAYLOAD="$(cat)"
+  TTS_STOP_DETACHED=1 nohup "$0" "$PAYLOAD" >/dev/null 2>&1 &
+  exit 0
+fi
 
-g, p = {}, {}
-try:
-    with open(os.path.expanduser('~/.claude/tts-config.json')) as f:
-        g = json.load(f)
-except Exception:
-    pass
-try:
-    with open('.claude/tts-config.json') as f:
-        p = json.load(f)
-except Exception:
-    pass
-cfg = {**g, **p}
+PAYLOAD="${1:-}"
+
+# --- Config ---
+# tts_config.py owns the merge and the walk up the directory tree. The prompt
+# default lives here because it is specific to this hook, so this block calls
+# resolve() directly rather than using the CLI.
+eval "$(python3 <<'PY' 2>/dev/null
+import shlex, sys
+sys.path.insert(0, __import__('os').path.expanduser('~/.claude/skills/tts'))
+from tts_config import resolve
+
+cfg, _ = resolve()
 
 DEFAULT_PROMPT = (
     "The text below is an AI coding assistant's most recent reply, about to "

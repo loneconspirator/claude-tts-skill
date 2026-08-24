@@ -16,34 +16,15 @@ VENV_PYTHON="$HOME/.claude/tts-venv/bin/python"
 LOG="/tmp/tts-autoheal.log"
 LOCK="/tmp/tts-autoheal.lock"
 
-cd "$SKILL_DIR" || exit 0
-
 # --- Config ---
-eval "$(python3 <<'PY' 2>/dev/null
-import json, os, shlex
+# Read before the cd below: project config is found by walking up from the
+# current directory, and cd'ing into the skill dir first would resolve against
+# the skill's own tree rather than the caller's project.
+eval "$(python3 "$SKILL_DIR/tts_config.py" auto_heal heal_model heal_max_words 2>/dev/null)"
 
-g, p = {}, {}
-try:
-    with open(os.path.expanduser('~/.claude/tts-config.json')) as f:
-        g = json.load(f)
-except Exception:
-    pass
-try:
-    with open('.claude/tts-config.json') as f:
-        p = json.load(f)
-except Exception:
-    pass
-cfg = {**g, **p}
-
-out = {
-    'AUTO_HEAL': 'yes' if cfg.get('auto_heal', False) else 'no',
-    'HEAL_MODEL': cfg.get('heal_model', 'claude-haiku-4-5-20251001'),
-    'HEAL_MAX_WORDS': str(cfg.get('heal_max_words', 12)),
-}
-for k, v in out.items():
-    print(f'{k}={shlex.quote(str(v))}')
-PY
-)"
+# The curation helpers resolve the dict and miss log relative to themselves,
+# but run from the skill dir so their own imports line up.
+cd "$SKILL_DIR" || exit 0
 
 [ "$AUTO_HEAL" = "yes" ] || exit 0
 
