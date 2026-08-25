@@ -9,8 +9,9 @@ Previews go through the same phonemizer choice as the real speak path
 (`kokoro_speak.phonemizer_for`): each voice's own language when that language
 is installed, en-us otherwise. So what you hear here is what you will get.
 
-Every voice reads the same English sample, since English is what the speak
-path will hand it; `t` swaps in your own text.
+Each voice introduces itself in English — English is what the speak path
+will hand it — so you hear the accent, not a translation; `t` swaps in your
+own text.
 
 Keys:
     ↑/↓, j/k, PgUp/PgDn, g/G   move
@@ -57,11 +58,15 @@ LANGUAGE_NAMES = {
     "z": "Chinese",
 }
 
-# One English sample for every voice. The speak path reads Claude's English
-# replies, so what a non-English voice does with English is the thing being
-# auditioned — a Spanish line read by a Spanish voice tells you nothing about
-# how it will sound in use.
-SAMPLE = "Finished the refactor — three tests were failing, they all pass now."
+
+
+# The list column names a language; the spoken introduction wants a
+# nationality, and the two differ often enough to spell out.
+DEMONYMS = {
+    "American English": "American",
+    "British English": "British",
+    "Hindi": "Indian",
+}
 
 
 # Japanese and Chinese need optional misaki extras; the rest ship with it.
@@ -219,6 +224,22 @@ def describe(voice: str) -> tuple[str, str]:
     return language, gender
 
 
+def sample_text(voice: str) -> str:
+    """The line a voice introduces itself with, always in English.
+
+    The speak path hands every voice Claude's English replies, so what is
+    being auditioned is the accent a Spanish or Japanese voice puts on
+    English — not how it reads its own language.
+    """
+    language, gender = describe(voice)
+    name = voice.split("_", 1)[-1].capitalize()
+    who = " ".join(
+        part for part in (DEMONYMS.get(language, language), gender.capitalize())
+        if part and part != "—"
+    )
+    return f"This is the voice of {name}, {who}." if who else f"This is the voice of {name}."
+
+
 def prompt(stdscr, label: str, initial: str = "") -> str | None:
     """Read a line at the bottom of the screen. Esc cancels, Enter accepts."""
     buffer = initial
@@ -273,13 +294,13 @@ def run(stdscr) -> str | None:
             if needle in v.lower() or needle in describe(v)[0].lower()
         ]
 
-    def sample_for() -> str:
-        return custom_text or SAMPLE
+    def sample_for(voice: str) -> str:
+        return custom_text or sample_text(voice)
 
     def play(voice: str) -> None:
         nonlocal playing
         playing = voice
-        engine.request(voice, sample_for(), speed)
+        engine.request(voice, sample_for(voice), speed)
 
     initialized = False
 
@@ -324,7 +345,7 @@ def run(stdscr) -> str | None:
             status = engine.status
         if filter_text:
             status = f"{status}   [filter: {filter_text}]"
-        sample = sample_for()
+        sample = sample_for(voices[selected]) if voices else ""
         keys = (
             " arrows move . enter replay . a autoplay:%s . s set default . "
             "t text . +/- speed . / filter . q quit" % ("on" if autoplay else "off")
