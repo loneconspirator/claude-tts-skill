@@ -24,6 +24,19 @@ if [ -z "$TEXT" ]; then
   exit 1
 fi
 
+# Strip markdown before any engine sees it. Every caller funnels through
+# here, including direct speak.sh calls from the model (the SessionStart
+# inject hook). Kokoro reads "*" as "asterisk" and "`" as "backtick"; Qwen
+# and Chatterbox mangle URLs and hashes. The Stop hook's condense prompt
+# handles most of this, but direct calls and condense fallbacks arrive raw.
+TEXT="$(printf %s "$TEXT" | python3 "$SCRIPT_DIR/sanitize_for_speech.py")"
+
+if [ -z "${TEXT// }" ]; then
+  # Sanitizing removed everything (e.g. a reply that was only a URL or only
+  # markdown punctuation). Nothing speakable remains.
+  exit 0
+fi
+
 # --- Merge config (nearest project config overrides global) ---
 # tts_config.py owns the lookup rules, including the walk up the directory
 # tree. It emits uppercase KEY=value; the lowercase names below are what the
