@@ -224,6 +224,51 @@ def build_segments(
     return segments
 
 
+# Kokoro pads every utterance with near-silence: measured at ~280ms before the
+# first phoneme and ~440ms after the last. Fed one sentence per call — which is
+# how the clipboard reader and the daemon queue work — that is ~0.7s of dead air
+# at every sentence boundary, on top of the gap the caller actually asked for.
+# Trim it back to a short lead-in/lead-out so sentences run together.
+TRIM_FRAME_MS = 10      # analysis frame
+TRIM_THRESHOLD = 0.015  # fraction of peak amplitude that counts as speech
+TRIM_KEEP_MS = 20       # silence left on each side after trimming
+TRIM_FADE_MS = 5        # ramp at each cut so it doesn't click
+
+
+def trim_silence(audio: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
+    """Drop the model's leading/trailing near-silence, leaving a short margin.
+
+    Threshold is relative to the clip's own peak: Kokoro's "silence" is a low
+    noise floor (~0.007 against a 0.35 peak), not true zero, so an absolute
+    cutoff would either miss it or bite into quiet speech.
+    """
+    if not len(audio):
+        return audio
+    peak = float(np.abs(audio).max())
+    if peak <= 0.0:
+        return audio
+    frame = max(1, sample_rate * TRIM_FRAME_MS // 1000)
+    count = len(audio) // frame
+    if count < 3:
+        return audio
+    loud = np.abs(audio[:count * frame].reshape(count, frame)).max(axis=1)
+    voiced = loud > peak * TRIM_THRESHOLD
+    if not voiced.any():
+        return audio
+    first = int(np.argmax(voiced))
+    last = count - 1 - int(np.argmax(voiced[::-1]))
+    keep = sample_rate * TRIM_KEEP_MS // 1000
+    start = max(0, first * frame - keep)
+    end = min(len(audio), (last + 1) * frame + keep)
+    out = np.array(audio[start:end], dtype=np.float32)
+    fade = min(sample_rate * TRIM_FADE_MS // 1000, len(out) // 2)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        out[:fade] *= ramp
+        out[-fade:] *= ramp[::-1]
+    return out
+
+
 def synthesize(
     segments: list[tuple[str, str]],
     model: KokoroModel,
@@ -239,10 +284,10 @@ def synthesize(
     """
     if not any(kind == "ipa" for kind, _ in segments):
         text = "".join(value for _, value in segments)
-        return generate(
+        return trim_silence(generate(
             text, model, model.config, voice_manager,
             voice=voice, speed=speed, phonemizer=phonemizer,
-        )
+        ))
 
     parts: list[str] = []
     for kind, value in segments:
@@ -257,7 +302,7 @@ def synthesize(
     token_count = sum(1 for c in phonemes if c in model.config.vocab) + 2
     style = voice_manager.get_style(voice_array, token_count)
     audio = model.forward(phonemes, style, speed)
-    return np.array(audio.tolist(), dtype=np.float32)
+    return trim_silence(np.array(audio.tolist(), dtype=np.float32))
 
 
 def main() -> None:
