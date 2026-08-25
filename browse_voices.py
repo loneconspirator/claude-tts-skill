@@ -9,6 +9,9 @@ Previews go through the same phonemizer choice as the real speak path
 (`kokoro_speak.phonemizer_for`): each voice's own language when that language
 is installed, en-us otherwise. So what you hear here is what you will get.
 
+Every voice reads the same English sample, since English is what the speak
+path will hand it; `t` swaps in your own text.
+
 Keys:
     ↑/↓, j/k, PgUp/PgDn, g/G   move
     ⏎ / space                  replay the selected voice
@@ -54,19 +57,11 @@ LANGUAGE_NAMES = {
     "z": "Chinese",
 }
 
-# One sample per language so a voice is judged on its own phonemes, not on
-# English words forced through a phonemizer that was not built for them.
-SAMPLES = {
-    "en-us": "Finished the refactor — three tests were failing, they all pass now.",
-    "en-gb": "Finished the refactor — three tests were failing, they all pass now.",
-    "es": "Terminé la revisión del código. Las tres pruebas ya pasan.",
-    "fr-fr": "J'ai terminé la révision du code. Les trois tests passent maintenant.",
-    "hi": "मैंने कोड की समीक्षा पूरी कर ली है। तीनों परीक्षण अब पास हो रहे हैं।",
-    "it": "Ho finito la revisione del codice. I tre test ora passano.",
-    "ja": "コードの修正が終わりました。テストは全部通っています。",
-    "pt-br": "Terminei a revisão do código. Os três testes agora passam.",
-    "zh": "我已经完成了代码审查，三个测试现在都通过了。",
-}
+# One English sample for every voice. The speak path reads Claude's English
+# replies, so what a non-English voice does with English is the thing being
+# auditioned — a Spanish line read by a Spanish voice tells you nothing about
+# how it will sound in use.
+SAMPLE = "Finished the refactor — three tests were failing, they all pass now."
 
 
 # Japanese and Chinese need optional misaki extras; the rest ship with it.
@@ -278,15 +273,13 @@ def run(stdscr) -> str | None:
             if needle in v.lower() or needle in describe(v)[0].lower()
         ]
 
-    def sample_for(voice: str) -> str:
-        if custom_text:
-            return custom_text
-        return SAMPLES.get(language_from_voice(voice), SAMPLES["en-us"])
+    def sample_for() -> str:
+        return custom_text or SAMPLE
 
     def play(voice: str) -> None:
         nonlocal playing
         playing = voice
-        engine.request(voice, sample_for(voice), speed)
+        engine.request(voice, sample_for(), speed)
 
     initialized = False
 
@@ -331,7 +324,7 @@ def run(stdscr) -> str | None:
             status = engine.status
         if filter_text:
             status = f"{status}   [filter: {filter_text}]"
-        sample = sample_for(voices[selected]) if voices else ""
+        sample = sample_for()
         keys = (
             " arrows move . enter replay . a autoplay:%s . s set default . "
             "t text . +/- speed . / filter . q quit" % ("on" if autoplay else "off")

@@ -150,8 +150,10 @@ Reads the active engine from config and lists its available voices.
 
 A curses browser over the Kokoro voices: moving the selection renders and
 plays that voice, `s` saves it as the global default, `t` changes the sample
-text, `+`/`-` change speed. Previews use the same phonemizer the speak path
-would (see the Kokoro engine notes above), so what you hear is what you get.
+text, `+`/`-` change speed. Every voice reads the same English sample, since
+English is what the speak path hands it. Previews use the same phonemizer the
+speak path would (see the Kokoro engine notes above), so what you hear is what
+you get.
 
 This is an interactive full-screen program — tell the user to run it in their
 terminal; do not launch it from a tool call.
