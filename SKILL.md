@@ -73,7 +73,7 @@ Parse the user's arguments (available as `$ARGUMENTS`):
 - `/tts engine <kokoro|qwen|chatterbox>` — Switch TTS engine.
 - `/tts voice <name>` — Set voice (see engine-specific voices above).
 - `/tts voices` — List available voices for current engine.
-- `/tts browse` — Interactive voice browser (Kokoro only): arrow through the voices and hear each one. It takes over the terminal, so hand the user the command to run rather than running it yourself.
+- `/tts browse` — Interactive voice browser (Kokoro only): arrow through the voices and hear each one, then save it globally (`s`) or for this project (`p`). It takes over the terminal, so hand the user the command to run rather than running it yourself.
 - `/tts speed <number>` — Set speed (0.5 to 2.0, Kokoro only).
 - `/tts style <description>` — Set voice style instruction (Qwen only). Use `/tts style clear` to remove.
 - `/tts exaggeration <number>` — Set emotion intensity 0.0-1.0 (Chatterbox only).
@@ -149,11 +149,17 @@ Reads the active engine from config and lists its available voices.
 ```
 
 A curses browser over the Kokoro voices: moving the selection renders and
-plays that voice, `s` saves it as the global default, `t` changes the sample
-text, `+`/`-` change speed. Each voice introduces itself in English ("This is
-the voice of Alloy, American Female"), since English is what the speak path
-hands it. Previews use the same phonemizer the speak path would (see the
-Kokoro engine notes above), so what you hear is what you get.
+plays that voice, `s` saves it as the global default, `p` saves it for the
+current project, `t` changes the sample text, `+`/`-` change speed. Each
+voice introduces itself in English ("This is the voice of Alloy, American
+Female"), since English is what the speak path hands it. Previews use the
+same phonemizer the speak path would (see the Kokoro engine notes above), so
+what you hear is what you get.
+
+`p` appears only when a `.claude` directory exists at or above the current
+directory; it writes `voice` into that directory's `tts-config.json`, creating
+the file if this is the project's first setting. The header shows the global
+and project voices side by side, and `*` marks the one in effect.
 
 The mouse works too where the terminal reports it: click a voice to hear it,
 click any bracketed button on the bottom row, scroll to move through the list.

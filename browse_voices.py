@@ -18,6 +18,7 @@ Keys:
     ⏎ / space                  replay the selected voice
     a                          toggle auto-play on move
     s                          save selection as the global default voice
+    p                          save selection for this project (needs .claude)
     t                          edit the sample text
     + / -                      speed up / down by 0.1
     /                          filter by name or language
@@ -45,8 +46,8 @@ from pathlib import Path
 
 from kokoro_mlx.phonemize import language_from_voice
 from kokoro_speak import phonemizer_for
+from tts_config import DEFAULTS, GLOBAL_CFG, resolve
 
-GLOBAL_CFG = Path.home() / ".claude" / "tts-config.json"
 MODEL_REPO = "mlx-community/Kokoro-82M-bf16"
 CACHE_GLOB = os.path.expanduser(
     "~/.cache/huggingface/hub/models--mlx-community--Kokoro-82M-bf16/snapshots/*"
@@ -79,21 +80,46 @@ DEMONYMS = {
 MISAKI_EXTRAS = {"ja": "ja", "zh": "zh"}
 
 
-def load_config() -> dict:
+def load_config(path: Path | None) -> dict:
     try:
-        with open(GLOBAL_CFG) as f:
+        with open(path) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
-def save_voice(voice: str) -> None:
-    """Write `voice` into the global config, leaving every other key alone."""
-    config = load_config()
+def project_config_path(start: Path | None = None) -> Path | None:
+    """Where this project's tts-config.json lives, or would live.
+
+    `tts_config.find_project_config` only reports a config that already
+    exists; the browser also has to write the first one, so it looks for the
+    nearest ancestor `.claude` directory instead. ~/.claude is skipped — that
+    one holds the global config, not a project's — and the walk stops at $HOME
+    for the same reason the config lookup does.
+    """
+    try:
+        current = (start or Path.cwd()).resolve()
+    except Exception:
+        return None
+
+    home = Path.home().resolve()
+    global_dir = GLOBAL_CFG.parent.resolve()
+    for directory in [current, *current.parents]:
+        candidate = directory / ".claude"
+        if candidate.is_dir() and candidate.resolve() != global_dir:
+            return candidate / GLOBAL_CFG.name
+        if directory == home:
+            break
+    return None
+
+
+def save_voice(voice: str, path: Path) -> None:
+    """Write `voice` into `path`, leaving every other key in it alone."""
+    config = load_config(path)
     config["voice"] = voice
-    GLOBAL_CFG.parent.mkdir(parents=True, exist_ok=True)
-    with open(GLOBAL_CFG, "w") as f:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
@@ -233,7 +259,8 @@ KEY_ACTIONS = {
     ord("g"): "top", ord("G"): "bottom",
     curses.KEY_ENTER: "replay", 10: "replay", 13: "replay", ord(" "): "replay",
     ord("a"): "autoplay",
-    ord("s"): "save",
+    ord("s"): "save-global",
+    ord("p"): "save-project",
     ord("t"): "text",
     ord("+"): "faster", ord("="): "faster",
     ord("-"): "slower", ord("_"): "slower",
@@ -334,7 +361,7 @@ def prompt(stdscr, label: str, initial: str = "") -> str | None:
         curses.curs_set(0)
 
 
-def run(stdscr) -> str | None:
+def run(stdscr) -> dict[Path, str]:
     curses.curs_set(0)
     curses.use_default_colors()
     stdscr.timeout(120)
@@ -345,10 +372,11 @@ def run(stdscr) -> str | None:
     curses.mousemask(curses.BUTTON1_PRESSED | WHEEL_UP | WHEEL_DOWN)
     curses.mouseinterval(0)
 
-    config = load_config()
-    speed = float(config.get("speed", 1.0))
-    default_voice = config.get("voice", "af_heart")
-    saved_voice: str | None = None
+    speed = float(resolve()[0].get("speed", 1.0))
+    project_cfg = project_config_path()
+    global_voice = load_config(GLOBAL_CFG).get("voice", DEFAULTS["voice"])
+    project_voice = load_config(project_cfg).get("voice") if project_cfg else None
+    saves: dict[Path, str] = {}
     custom_text: str | None = None
     autoplay = True
     filter_text = ""
@@ -382,8 +410,9 @@ def run(stdscr) -> str | None:
         if voices and not initialized:
             # Land on the voice currently in use so the first thing you hear
             # is what you already have.
-            if default_voice in voices:
-                selected = voices.index(default_voice)
+            in_use = project_voice or global_voice
+            if in_use in voices:
+                selected = voices.index(in_use)
             play(voices[selected])
             initialized = True
         if voices:
@@ -397,14 +426,17 @@ def run(stdscr) -> str | None:
 
         stdscr.erase()
         header = f" Kokoro voices ({len(voices)})"
-        right = f"speed {speed:.1f}   default: {saved_voice or default_voice} "
+        scopes = f"global: {global_voice}"
+        if project_cfg is not None:
+            scopes += f"   project: {project_voice or '(unset)'}"
+        right = f"speed {speed:.1f}   {scopes} "
         bar = header.ljust(max(0, width - 1 - len(right))) + right
         stdscr.addstr(0, 0, bar[: width - 1], curses.A_BOLD | curses.A_REVERSE)
 
         for row, index in enumerate(range(top, min(top + body_height, len(voices)))):
             voice = voices[index]
             language, gender = describe(voice)
-            marker = "*" if voice == (saved_voice or default_voice) else " "
+            marker = "*" if voice == (project_voice or global_voice) else " "
             extra = engine.unavailable.get(language_from_voice(voice))
             note = f"   en-us fallback — needs misaki[{extra}]" if extra else ""
             line = f" {marker} {voice:<16} {language:<18} {gender:<8}{note}"
@@ -429,13 +461,15 @@ def run(stdscr) -> str | None:
             ("j/k move", None),
             ("enter replay", "replay"),
             ("a autoplay:%s" % ("on" if autoplay else "off"), "autoplay"),
-            ("s default", "save"),
+            ("s global", "save-global"),
             ("t text", "text"),
             ("- slower", "slower"),
             ("+ faster", "faster"),
             ("/ filter", "filter"),
             (". stop", "stop"),
         ]
+        if project_cfg is not None:
+            hints.insert(4, ("p project", "save-project"))
         buttons: list[tuple[int, int, str]] = []
 
         # Quit is pinned to the right edge rather than queued behind the rest.
@@ -499,11 +533,23 @@ def run(stdscr) -> str | None:
                 play(voices[selected])
         elif action == "autoplay":
             autoplay = not autoplay
-        elif action == "save":
-            if voices:
-                saved_voice = voices[selected]
-                save_voice(saved_voice)
-                engine.set_status(f"saved {saved_voice} as the default voice")
+        elif action in ("save-global", "save-project") and voices:
+            if action == "save-global":
+                global_voice = voices[selected]
+                save_voice(global_voice, GLOBAL_CFG)
+                saves[GLOBAL_CFG] = global_voice
+                engine.set_status(f"saved {global_voice} as the global voice")
+            elif project_cfg is None:
+                engine.set_status(
+                    f"no .claude directory above {Path.cwd()} — nothing to set"
+                )
+            else:
+                project_voice = voices[selected]
+                save_voice(project_voice, project_cfg)
+                saves[project_cfg] = project_voice
+                engine.set_status(
+                    f"saved {project_voice} for {project_cfg.parent.parent.name}"
+                )
         elif action in ("faster", "slower"):
             step = 0.1 if action == "faster" else -0.1
             speed = max(0.5, min(2.0, round(speed + step, 1)))
@@ -525,7 +571,7 @@ def run(stdscr) -> str | None:
             engine.stop()
         elif action == "quit":
             engine.shutdown()
-            return saved_voice
+            return saves
         elif action == "resize":
             continue
 
@@ -540,11 +586,11 @@ def run(stdscr) -> str | None:
 
 def main() -> None:
     locale.setlocale(locale.LC_ALL, "")
-    saved = curses.wrapper(run)
-    if saved:
-        print(f"Default voice set to {saved} in {GLOBAL_CFG}")
-    else:
-        print("No change — default voice left as is.")
+    saves = curses.wrapper(run)
+    for path, voice in saves.items():
+        print(f"Voice set to {voice} in {path}")
+    if not saves:
+        print("No change — voice left as is.")
 
 
 if __name__ == "__main__":
