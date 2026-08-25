@@ -155,6 +155,11 @@ the voice of Alloy, American Female"), since English is what the speak path
 hands it. Previews use the same phonemizer the speak path would (see the
 Kokoro engine notes above), so what you hear is what you get.
 
+The mouse works too where the terminal reports it: click a voice to hear it,
+click any bracketed button on the bottom row, scroll to move through the list.
+Clicks go to the browser while it runs, so copying text off the screen needs
+the usual modifier (Option in Terminal.app and iTerm2, Shift elsewhere).
+
 This is an interactive full-screen program — tell the user to run it in their
 terminal; do not launch it from a tool call.
 

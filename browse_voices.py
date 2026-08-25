@@ -23,6 +23,12 @@ Keys:
     /                          filter by name or language
     .                          stop playback
     q / Esc                    quit
+
+Mouse (when the terminal reports it): click a voice to hear it, click a
+bracketed button on the bottom row, scroll wheel to move through the list.
+While the browser is running the terminal hands clicks to it rather than to
+its own selection, so copying text needs the usual modifier (Option in
+Terminal.app and iTerm2, Shift in most others).
 """
 from __future__ import annotations
 
@@ -218,6 +224,67 @@ class Engine:
                     self.status = "ready"
 
 
+# Every key and every click resolves to one of these action names, so there is
+# a single place that decides what an action does.
+KEY_ACTIONS = {
+    curses.KEY_DOWN: "down", ord("j"): "down",
+    curses.KEY_UP: "up", ord("k"): "up",
+    curses.KEY_NPAGE: "pagedown", curses.KEY_PPAGE: "pageup",
+    ord("g"): "top", ord("G"): "bottom",
+    curses.KEY_ENTER: "replay", 10: "replay", 13: "replay", ord(" "): "replay",
+    ord("a"): "autoplay",
+    ord("s"): "save",
+    ord("t"): "text",
+    ord("+"): "faster", ord("="): "faster",
+    ord("-"): "slower", ord("_"): "slower",
+    ord("/"): "filter",
+    ord("."): "stop",
+    ord("q"): "quit", 27: "quit",
+    curses.KEY_RESIZE: "resize",
+}
+
+# Wheel-up is button 4 everywhere. Wheel-down is button 5, which an ncurses
+# built with mouse version 1 — what ships here (6.0, no BUTTON5_PRESSED) — has
+# no bit for, so it arrives tagged REPORT_MOUSE_POSITION instead. Reading that
+# as wheel-down is only safe because ncurses keeps the terminal in xterm mode
+# 1000, which never reports motion; verified by capturing what it writes to the
+# pty. A build that does define BUTTON5_PRESSED can express the event properly,
+# so the fallback stays off there and a position report keeps its real meaning.
+WHEEL_UP = getattr(curses, "BUTTON4_PRESSED", 0)
+WHEEL_DOWN = getattr(curses, "BUTTON5_PRESSED", 0)
+if not WHEEL_DOWN:
+    WHEEL_DOWN = curses.REPORT_MOUSE_POSITION
+
+
+def read_mouse(
+    buttons: list[tuple[int, int, str]], top: int, body_height: int, height: int
+) -> tuple[str | None, int | None]:
+    """Resolve a mouse report to (action, clicked row index).
+
+    Returns (None, None) for a click on dead space, and for a report curses
+    cannot hand back — getmouse() raises when the event queue has already
+    moved on, which is not worth surfacing.
+    """
+    try:
+        _, x, y, _, state = curses.getmouse()
+    except curses.error:
+        return None, None
+    if state & WHEEL_UP:
+        return "up", None
+    if state & WHEEL_DOWN:
+        return "down", None
+    if not state & curses.BUTTON1_PRESSED:
+        return None, None
+    if y == height - 1:
+        for start, end, action in buttons:
+            if start <= x < end:
+                return action, None
+        return None, None
+    if 1 <= y <= body_height:
+        return "select", top + y - 1
+    return None, None
+
+
 def describe(voice: str) -> tuple[str, str]:
     language = LANGUAGE_NAMES.get(voice[:1], "—")
     gender = {"f": "female", "m": "male"}.get(voice[1:2], "")
@@ -271,6 +338,12 @@ def run(stdscr) -> str | None:
     curses.curs_set(0)
     curses.use_default_colors()
     stdscr.timeout(120)
+    # A terminal with mouse reporting unavailable just returns an empty mask
+    # and everything below stays keyboard-only. mouseinterval(0) turns off the
+    # double-click resolution delay, which otherwise sits on every press for
+    # ~200ms before curses reports it — long enough to feel broken.
+    curses.mousemask(curses.BUTTON1_PRESSED | WHEEL_UP | WHEEL_DOWN)
+    curses.mouseinterval(0)
 
     config = load_config()
     speed = float(config.get("speed", 1.0))
@@ -346,65 +419,114 @@ def run(stdscr) -> str | None:
         if filter_text:
             status = f"{status}   [filter: {filter_text}]"
         sample = sample_for(voices[selected]) if voices else ""
-        keys = (
-            " arrows move . enter replay . a autoplay:%s . s set default . "
-            "t text . +/- speed . / filter . q quit" % ("on" if autoplay else "off")
-        )
         stdscr.addstr(height - 3, 0, f' sample: "{sample}"'[: width - 1], curses.A_DIM)
         stdscr.addstr(height - 2, 0, f" {status}"[: width - 1], curses.A_BOLD)
-        stdscr.addstr(height - 1, 0, keys[: width - 1], curses.A_DIM)
+
+        # Bracketed hints are buttons; the bare one is a keyboard-only note.
+        # Labels stay ASCII so len() is the column count — the click hit-test
+        # indexes into these spans and a double-width glyph would skew it.
+        hints = [
+            ("j/k move", None),
+            ("enter replay", "replay"),
+            ("a autoplay:%s" % ("on" if autoplay else "off"), "autoplay"),
+            ("s default", "save"),
+            ("t text", "text"),
+            ("- slower", "slower"),
+            ("+ faster", "faster"),
+            ("/ filter", "filter"),
+            (". stop", "stop"),
+        ]
+        buttons: list[tuple[int, int, str]] = []
+
+        # Quit is pinned to the right edge rather than queued behind the rest.
+        # The full bar wants ~113 columns, so on any ordinary terminal the tail
+        # of it falls off — and the one button that must never be the casualty
+        # is the way out.
+        quit_cell = "[q quit]"
+        quit_start = width - 1 - len(quit_cell)
+        if quit_start > 0:
+            stdscr.addstr(height - 1, quit_start, quit_cell, curses.A_DIM)
+            buttons.append((quit_start, quit_start + len(quit_cell), "quit"))
+        else:
+            quit_start = width - 1
+
+        column = 1
+        for label, action in hints:
+            cell = f"[{label}]" if action else label
+            if column + len(cell) >= quit_start:
+                break  # ran out of row; a button not drawn must not be clickable
+            stdscr.addstr(height - 1, column, cell, curses.A_DIM)
+            if action:
+                buttons.append((column, column + len(cell), action))
+            column += len(cell) + 1
         stdscr.refresh()
 
         ch = stdscr.getch()
         if ch == -1:
             continue
 
+        clicked_row: int | None = None
+        if ch == curses.KEY_MOUSE:
+            action, clicked_row = read_mouse(buttons, top, body_height, height)
+        else:
+            action = KEY_ACTIONS.get(ch)
+        if action is None:
+            continue
+
         previous = selected
-        if ch in (curses.KEY_DOWN, ord("j")):
+        if action == "down":
             selected += 1
-        elif ch in (curses.KEY_UP, ord("k")):
+        elif action == "up":
             selected -= 1
-        elif ch == curses.KEY_NPAGE:
+        elif action == "pagedown":
             selected += body_height
-        elif ch == curses.KEY_PPAGE:
+        elif action == "pageup":
             selected -= body_height
-        elif ch == ord("g"):
+        elif action == "top":
             selected = 0
-        elif ch == ord("G"):
+        elif action == "bottom":
             selected = len(voices) - 1
-        elif ch in (curses.KEY_ENTER, 10, 13, ord(" ")):
+        elif action == "select":
+            # Clicking past the end of a short list lands on no voice.
+            if voices and clicked_row is not None and clicked_row < len(voices):
+                selected = clicked_row
+                play(voices[selected])
+                # A click is an explicit request and has already been played,
+                # so keep the autoplay check below from firing a second time.
+                previous = selected
+        elif action == "replay":
             if voices:
                 play(voices[selected])
-        elif ch == ord("a"):
+        elif action == "autoplay":
             autoplay = not autoplay
-        elif ch == ord("s"):
+        elif action == "save":
             if voices:
                 saved_voice = voices[selected]
                 save_voice(saved_voice)
                 engine.set_status(f"saved {saved_voice} as the default voice")
-        elif ch in (ord("+"), ord("="), ord("-"), ord("_")):
-            step = 0.1 if ch in (ord("+"), ord("=")) else -0.1
+        elif action in ("faster", "slower"):
+            step = 0.1 if action == "faster" else -0.1
             speed = max(0.5, min(2.0, round(speed + step, 1)))
             if voices:
                 play(voices[selected])
-        elif ch == ord("t"):
+        elif action == "text":
             answer = prompt(stdscr, "sample text: ", custom_text or "")
             if answer is not None:
                 custom_text = answer.strip() or None
                 if voices:
                     play(voices[selected])
-        elif ch == ord("/"):
+        elif action == "filter":
             answer = prompt(stdscr, "filter: ", filter_text)
             if answer is not None:
                 filter_text = answer.strip()
                 selected = 0
                 top = 0
-        elif ch == ord("."):
+        elif action == "stop":
             engine.stop()
-        elif ch in (ord("q"), 27):
+        elif action == "quit":
             engine.shutdown()
             return saved_voice
-        elif ch == curses.KEY_RESIZE:
+        elif action == "resize":
             continue
 
         # The filter may have changed the list out from under `selected`, so
