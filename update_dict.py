@@ -2,9 +2,10 @@
 """Add validated substitutions to phonemizer-dict.json.
 
 Usage:
-    python update_dict.py word1=sub1 "word2=ipa:..." ...
+    python update_dict.py [--force] word1=sub1 "word2=ipa:..." ...
 
     Each argument is a word=substitution pair. Keys are lowercased.
+    An existing key is kept unless --force is passed, which replaces it.
     The dict is kept alphabetically sorted (with _comment preserved at top).
 
 Example:
@@ -22,11 +23,15 @@ DICT_PATH = SKILL_DIR / "phonemizer-dict.json"
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} word1=sub1 word2=sub2 ...", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [--force] word1=sub1 word2=sub2 ...", file=sys.stderr)
         sys.exit(2)
 
+    args = sys.argv[1:]
+    force = "--force" in args
+    args = [a for a in args if a != "--force"]
+
     new_entries: dict[str, str] = {}
-    for arg in sys.argv[1:]:
+    for arg in args:
         if "=" not in arg:
             print(f"Skipping malformed argument (expected word=sub): {arg!r}", file=sys.stderr)
             continue
@@ -42,13 +47,16 @@ def main() -> None:
 
     comment = raw.pop("_comment", None)
 
-    added, skipped = [], []
+    added, replaced, skipped = [], [], []
     for word, sub in new_entries.items():
-        if word in raw:
+        if word in raw and not force:
             skipped.append((word, raw[word], sub))
+            continue
+        if word in raw:
+            replaced.append((word, raw[word], sub))
         else:
-            raw[word] = sub
             added.append((word, sub))
+        raw[word] = sub
 
     sorted_dict = dict(sorted(raw.items()))
     if comment is not None:
@@ -62,6 +70,11 @@ def main() -> None:
         print(f"Added {len(added)} entr{'y' if len(added) == 1 else 'ies'}:")
         for word, sub in added:
             print(f"  {word!r} → {sub!r}")
+
+    if replaced:
+        print(f"Replaced {len(replaced)} entr{'y' if len(replaced) == 1 else 'ies'}:")
+        for word, old, new in replaced:
+            print(f"  {word!r}: {old!r} → {new!r}")
 
     if skipped:
         print(f"\nSkipped {len(skipped)} already-present key(s) (use --force to overwrite):")
