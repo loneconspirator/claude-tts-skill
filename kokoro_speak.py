@@ -106,24 +106,26 @@ def spell_out(word: str) -> str:
 IPA_PREFIX = "ipa:"
 
 
-def resolve_word(
-    word: str, phonemizer: Phonemizer, sub_dict: dict[str, str]
-) -> tuple[str, str]:
-    """Find a phonemizable replacement for a word that came back empty.
+def dict_entry(word: str, sub_dict: dict[str, str]) -> tuple[str, str] | None:
+    """The curated substitution for `word` as a segment, or None.
 
     Returns (kind, value) where kind is "text" (substituted English to be
     phonemized normally) or "ipa" (raw IPA phonemes to splice directly).
-    Tries: dict → compound split → spell out. Logs the resolution.
     """
-    lower = word.lower()
-    if lower in sub_dict:
-        sub = sub_dict[lower]
-        if sub.startswith(IPA_PREFIX):
-            ipa = sub[len(IPA_PREFIX):]
-            log_miss(word, f"ipa:{ipa}")
-            return ("ipa", ipa)
-        log_miss(word, f"dict:{sub}")
-        return ("text", sub)
+    sub = sub_dict.get(word.lower())
+    if sub is None:
+        return None
+    if sub.startswith(IPA_PREFIX):
+        return ("ipa", sub[len(IPA_PREFIX):])
+    return ("text", sub)
+
+
+def resolve_word(word: str, phonemizer: Phonemizer) -> tuple[str, str]:
+    """Find a phonemizable replacement for a word that came back empty.
+
+    Callers check the dict first, so by the time a word gets here it has no
+    curated entry. Tries: compound split → spell out. Logs the resolution.
+    """
     split = try_compound_split(word, phonemizer)
     if split is not None:
         log_miss(word, f"split:{split}")
@@ -160,15 +162,22 @@ def build_segments(
         # Append any non-word chars between last position and this word
         pending_text += text[pos:match.start()]
         word = match.group(0)
-        if is_empty_phonemes(phonemizer, word):
-            kind, value = resolve_word(word, phonemizer, sub_dict)
-            if kind == "ipa":
-                flush_text()
-                segments.append(("ipa", value))
-            else:
-                pending_text += value
-        else:
+        # The dict is an override, not just a repair for silent drops. espeak
+        # resolves plenty of words to something confidently wrong — "AWS" read
+        # as a word rather than three letters — and those never reach the miss
+        # path, so a curated entry has to win before the phonemizer is asked.
+        entry = dict_entry(word, sub_dict) or (
+            resolve_word(word, phonemizer)
+            if is_empty_phonemes(phonemizer, word)
+            else None
+        )
+        if entry is None:
             pending_text += word
+        elif entry[0] == "ipa":
+            flush_text()
+            segments.append(("ipa", entry[1]))
+        else:
+            pending_text += entry[1]
         pos = match.end()
     pending_text += text[pos:]
     flush_text()
