@@ -94,6 +94,7 @@ All fields are optional. Common ones:
 | `ref_audio` | chatterbox | Path to .wav for voice cloning |
 | `kokoro_python` | kokoro | Override Kokoro Python interpreter path |
 | `chatterbox_python` | chatterbox | Override Chatterbox Python interpreter path |
+| `mute_cwd_globs` | all | Directories that stay silent. Defaults to `["*/scratchpad", "*/scratchpad/*"]`, which keeps probe and background sessions from speaking over the session that spawned them. |
 
 Use `/tts status` to see the effective merged config.
 

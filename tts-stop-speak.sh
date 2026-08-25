@@ -38,6 +38,15 @@ fi
 
 PAYLOAD="${1:-}"
 
+# Probe and background sessions run in a scratchpad directory: they speak over
+# the interactive session that spawned them, about work the user never asked
+# them for. Checked before the config read and the condense call, so a muted
+# session costs nothing.
+if MUTED_CWD="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/tts_cwd_muted.py")"; then
+  echo "$(date '+%H:%M:%S') muted cwd, staying silent: $MUTED_CWD" >> "$LOG"
+  exit 0
+fi
+
 # --- Config ---
 # tts_config.py owns the merge and the walk up the directory tree. The prompt
 # default lives here because it is specific to this hook, so this block calls

@@ -51,6 +51,10 @@ DEFAULTS: dict = {
     "heal_max_words": 12,
     "summary_model": "claude-haiku-4-5-20251001",
     "summary_min_chars": 200,
+    # Sessions whose cwd matches one of these stay silent. Probe and
+    # background sessions run in a scratchpad directory and would
+    # otherwise speak over the interactive session that spawned them.
+    "mute_cwd_globs": ["*/scratchpad", "*/scratchpad/*"],
 }
 
 
