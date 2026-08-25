@@ -111,6 +111,7 @@ See [SKILL.md](SKILL.md) for the full command reference. Quick tour:
 - `/tts engine <name>` — switch engines
 - `/tts voice <name>` — pick a voice
 - `/tts voices` — list available voices for current engine
+- `/tts browse` — browse Kokoro voices interactively, hearing each as you select it (`~/.claude/skills/tts/browse-voices.sh`)
 - `/tts status` — show effective config
 - `/tts heal` — curate pronunciation misses
 

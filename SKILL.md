@@ -2,12 +2,12 @@
 name: tts
 description: Toggle text-to-speech output and configure voice/engine settings. Use when user says /tts with arguments like on, off, voice, speed, style, engine, or status.
 user_invocable: true
-argument-hint: "[on|off|voice|voices|engine|speed|style|status|init|heal] --project --global"
+argument-hint: "[on|off|voice|voices|browse|engine|speed|style|status|init|heal] --project --global"
 ---
 
 # TTS Voice Control
 
-> **SYNC NOTE:** This file, `speak.sh`, `list-voices.sh`, and `adding-engines.md` all live in this folder and must be kept in sync. Engine changes touch all of them.
+> **SYNC NOTE:** This file, `speak.sh`, `list-voices.sh`, `browse-voices.sh`, and `adding-engines.md` all live in this folder and must be kept in sync. Engine changes touch all of them.
 
 Manage text-to-speech for Claude's responses.
 
@@ -72,6 +72,7 @@ Parse the user's arguments (available as `$ARGUMENTS`):
 - `/tts engine <kokoro|qwen|chatterbox>` — Switch TTS engine.
 - `/tts voice <name>` — Set voice (see engine-specific voices above).
 - `/tts voices` — List available voices for current engine.
+- `/tts browse` — Interactive voice browser (Kokoro only): arrow through the voices and hear each one. It takes over the terminal, so hand the user the command to run rather than running it yourself.
 - `/tts speed <number>` — Set speed (0.5 to 2.0, Kokoro only).
 - `/tts style <description>` — Set voice style instruction (Qwen only). Use `/tts style clear` to remove.
 - `/tts exaggeration <number>` — Set emotion intensity 0.0-1.0 (Chatterbox only).
@@ -139,6 +140,21 @@ uses the queue.
 ```
 
 Reads the active engine from config and lists its available voices.
+
+### Browsing voices by ear
+
+```bash
+~/.claude/skills/tts/browse-voices.sh
+```
+
+A curses browser over the Kokoro voices: moving the selection renders and
+plays that voice, `s` saves it as the global default, `t` changes the sample
+text, `+`/`-` change speed. Each voice is previewed in its own language.
+Japanese and Chinese voices need optional misaki packs (`misaki[ja]`,
+`misaki[zh]`); the browser says so instead of failing when one is missing.
+
+This is an interactive full-screen program — tell the user to run it in their
+terminal; do not launch it from a tool call.
 
 ## Ongoing Behavior
 
