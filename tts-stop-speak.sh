@@ -48,9 +48,6 @@ if MUTED_CWD="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/tts_cwd_muted.py")"; 
 fi
 
 # --- Config ---
-# tts_config.py owns the merge and the walk up the directory tree. The prompt
-# default lives here because it is specific to this hook, so this block calls
-# resolve() directly rather than using the CLI.
 eval "$(python3 <<'PY' 2>/dev/null
 import shlex, sys
 sys.path.insert(0, __import__('os').path.expanduser('~/.claude/skills/tts'))
@@ -58,47 +55,22 @@ from tts_config import resolve
 
 cfg, _ = resolve()
 
-DEFAULT_PROMPT = (
-    "The text below is an AI coding assistant's most recent reply, about to "
-    'be read aloud to the user who asked for it. Say what the assistant just '
-    'did, found, or needs — as if telling them out loud. Do not summarize the '
-    'text as a document, do not narrate it in the third person, and do not '
-    "describe what the reply contains. Speak in the assistant's own voice, "
-    'first person, present tense.\n\n'
-    'Two or three sentences. Lead with the outcome or the next action. If '
-    'there is a question or a thing for the user to do, that goes first and '
-    'must survive.\n\n'
-    'This is for listening, not reading — rewrite anything that works on '
-    'screen but not out loud:\n'
-    '- No markdown: strip headings, bold, italics, bullets, backticks, and '
-    'code fences; render everything as plain spoken prose.\n'
-    '- Dates: "2026-08-22" becomes "August 22nd, 2026" — or just "August '
-    '22nd" when the year matches the current year. The same for times and '
-    'relative dates: expand them into natural spoken form.\n'
-    '- Never read opaque identifiers aloud: GUIDs, UUIDs, hashes, issue keys '
-    'with long numbers, and hex strings are meaningless spoken. Refer to the '
-    'thing instead ("the task", "the session", "that commit").\n'
-    '- No code, no file paths, no command names, no version numbers. Never '
-    'speak a filename or extension, not even a bare one: say "the config '
-    'file" or "the settings", never "config dot json". Spell out symbols and '
-    'abbreviations a listener cannot see ("arrow", "greater than", "C '
-    'sharp").\n'
-    '- URLs become their spoken essence ("the docs page", "the pull request '
-    'on GitHub"), never "aitch tee tee pee".\n'
-    'Drop anything else that only makes sense on screen.\n\n'
-    'Output only the words to speak.'
-)
-
 out = {
     'ENABLED': 'yes' if cfg.get('enabled', False) else 'no',
     'SUMMARY_MODEL': cfg.get('summary_model', 'claude-haiku-4-5-20251001'),
-    'SUMMARY_PROMPT': cfg.get('summary_prompt', DEFAULT_PROMPT),
+    'SUMMARY_PROMPT': cfg.get('summary_prompt', ''),
     'SUMMARY_MIN_CHARS': str(cfg.get('summary_min_chars', 200)),
 }
 for k, v in out.items():
     print(f'{k}={shlex.quote(str(v))}')
 PY
 )"
+
+# The prompt lives in its own file so it is editable without touching the
+# hook. A summary_prompt in config still wins, for per-project overrides.
+if [ -z "$SUMMARY_PROMPT" ]; then
+  SUMMARY_PROMPT="$(cat "$SKILL_DIR/summary-prompt.txt")"
+fi
 
 [ "$ENABLED" = "yes" ] || exit 0
 

@@ -94,6 +94,9 @@ All fields are optional. Common ones:
 | `ref_audio` | chatterbox | Path to .wav for voice cloning |
 | `kokoro_python` | kokoro | Override Kokoro Python interpreter path |
 | `chatterbox_python` | chatterbox | Override Chatterbox Python interpreter path |
+| `summary_model` | all | Model that condenses replies for speech |
+| `summary_prompt` | all | Override the condense prompt (default: `summary-prompt.txt` in the skill dir — edit that file to change it) |
+| `summary_min_chars` | all | Replies shorter than this skip the condense pass |
 | `mute_cwd_globs` | all | Directories that stay silent. Defaults to `["*/scratchpad", "*/scratchpad/*"]`, which keeps probe and background sessions from speaking over the session that spawned them. |
 
 Use `/tts status` to see the effective merged config.
