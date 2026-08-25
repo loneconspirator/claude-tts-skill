@@ -37,6 +37,7 @@ Effective config = global values merged with project values (project wins on con
 ### Kokoro (default)
 - Speed control **actually works** (0.5 to 2.0)
 - 54 voices. Common ones: `af_heart`, `af_bella`, `af_nova`, `am_adam`, `am_michael`, `bf_emma`, `bm_george`
+- The phonemizer follows the voice's language prefix (`af`/`am` en-us, `bf`/`bm` en-gb, `ef` es, `jf` ja, …). Japanese and Chinese need optional misaki packs — without them those voices fall back to en-us phonemes (`uv pip install --python ~/.claude/tts-venv/bin/python 'misaki[ja]'` installs one).
 - Prefix meanings: `af_` = American female, `am_` = American male, `bf_` = British female, `bm_` = British male
 - Runs via venv at `~/.claude/tts-venv/bin/python`
 - No style/instruct support
@@ -149,9 +150,8 @@ Reads the active engine from config and lists its available voices.
 
 A curses browser over the Kokoro voices: moving the selection renders and
 plays that voice, `s` saves it as the global default, `t` changes the sample
-text, `+`/`-` change speed. Each voice is previewed in its own language.
-Japanese and Chinese voices need optional misaki packs (`misaki[ja]`,
-`misaki[zh]`); the browser says so instead of failing when one is missing.
+text, `+`/`-` change speed. Previews use the same phonemizer the speak path
+would (see the Kokoro engine notes above), so what you hear is what you get.
 
 This is an interactive full-screen program — tell the user to run it in their
 terminal; do not launch it from a tool call.

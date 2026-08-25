@@ -1,5 +1,10 @@
 """Kokoro TTS speak path with phonemizer-miss fallback.
 
+The phonemizer follows the voice: Kokoro voices carry their language in the
+name prefix, and a Spanish voice was trained on Spanish phonemes. When that
+language needs an optional misaki pack that isn't installed (Japanese, Chinese)
+we fall back to en-us and let the dictionary carry the pronunciation.
+
 Strategy when a word phonemizes to nothing:
   1. Look it up in phonemizer-dict.json (user-curated substitutions).
      Values starting with "ipa:" are spliced in as raw phonemes,
@@ -23,7 +28,7 @@ import numpy as np
 import soundfile as sf
 from kokoro_mlx.generate import generate
 from kokoro_mlx.model import KokoroModel
-from kokoro_mlx.phonemize import Phonemizer
+from kokoro_mlx.phonemize import Phonemizer, language_from_voice
 from kokoro_mlx.voices import VoiceManager
 
 SKILL_DIR = Path(__file__).parent
@@ -44,6 +49,41 @@ COMPOUND_SUFFIXES = [
     "type", "code", "data", "log", "size", "time", "line", "page",
     "agent", "test", "case", "step", "tool", "node", "link",
 ]
+
+
+DEFAULT_LANGUAGE = "en-us"
+
+
+def phonemizer_for(
+    vocab: dict[str, int],
+    voice: str,
+    cache: dict[str, tuple[Phonemizer, str]] | None = None,
+) -> tuple[Phonemizer, str]:
+    """The phonemizer for a voice's own language, and the language it uses.
+
+    Japanese and Chinese phonemization lives in optional misaki packs
+    (`misaki[ja]`, `misaki[zh]`). When the pack is missing there is no
+    language phonemizer to build, so this falls back to en-us — the voice
+    then reads its text the way an English speaker would, which the
+    dictionary and the miss-repair path can still be pointed at.
+
+    The returned language is the one actually in use; compare it against
+    `language_from_voice(voice)` to notice a fallback. Building a phonemizer
+    costs a couple of seconds, so long-lived callers should pass a `cache`.
+    """
+    cache = {} if cache is None else cache
+    requested = language_from_voice(voice)
+    if requested in cache:
+        return cache[requested]
+    try:
+        entry = (Phonemizer(vocab, requested), requested)
+    except Exception:
+        entry = cache.get(DEFAULT_LANGUAGE) or (
+            Phonemizer(vocab, DEFAULT_LANGUAGE), DEFAULT_LANGUAGE
+        )
+        cache[DEFAULT_LANGUAGE] = entry
+    cache[requested] = entry
+    return entry
 
 
 def load_dict() -> dict[str, str]:
@@ -190,6 +230,7 @@ def synthesize(
     voice_manager: VoiceManager,
     voice: str,
     speed: float,
+    phonemizer: Phonemizer,
 ) -> np.ndarray:
     """Build a single phoneme string from segments and run the model once.
 
@@ -200,10 +241,9 @@ def synthesize(
         text = "".join(value for _, value in segments)
         return generate(
             text, model, model.config, voice_manager,
-            voice=voice, speed=speed,
+            voice=voice, speed=speed, phonemizer=phonemizer,
         )
 
-    phonemizer = Phonemizer(model.config.vocab)
     parts: list[str] = []
     for kind, value in segments:
         if kind == "ipa":
@@ -231,10 +271,16 @@ def main() -> None:
 
     model = KokoroModel.from_pretrained(model_path)
     vm = VoiceManager(model_path)
-    phonemizer = Phonemizer(model.config.vocab)
+    phonemizer, language = phonemizer_for(model.config.vocab, voice)
+    if language != language_from_voice(voice):
+        print(
+            f"kokoro: no {language_from_voice(voice)} phonemizer installed "
+            f"(misaki extra missing); speaking {voice} as {language}",
+            file=sys.stderr,
+        )
 
     segments = build_segments(text, phonemizer)
-    audio = synthesize(segments, model, vm, voice, speed)
+    audio = synthesize(segments, model, vm, voice, speed, phonemizer)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         sf.write(f.name, audio, 24000)

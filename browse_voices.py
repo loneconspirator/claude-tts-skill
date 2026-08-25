@@ -5,9 +5,9 @@ Arrow through the voice list and hear each one as it is selected. The model
 loads once in a background thread and every rendered sample is cached, so
 re-selecting a voice replays instantly.
 
-Each voice is previewed through a phonemizer for that voice's own language
-(kokoro_mlx infers it from the name prefix), so the Spanish voices get Spanish
-phonemes rather than English ones read with a Spanish style vector.
+Previews go through the same phonemizer choice as the real speak path
+(`kokoro_speak.phonemizer_for`): each voice's own language when that language
+is installed, en-us otherwise. So what you hear here is what you will get.
 
 Keys:
     ↑/↓, j/k, PgUp/PgDn, g/G   move
@@ -29,12 +29,12 @@ import locale
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 from pathlib import Path
 
 from kokoro_mlx.phonemize import language_from_voice
+from kokoro_speak import phonemizer_for
 
 GLOBAL_CFG = Path.home() / ".claude" / "tts-config.json"
 MODEL_REPO = "mlx-community/Kokoro-82M-bf16"
@@ -158,7 +158,7 @@ class Engine:
         path = model_path()
         model = KokoroModel.from_pretrained(path)
         voice_manager = VoiceManager(path)
-        phonemizers: dict[str, Phonemizer] = {}
+        phonemizers: dict[str, tuple[Phonemizer, str]] = {}
 
         with self.lock:
             self.voices = sorted(voice_manager.list_voices())
@@ -177,15 +177,21 @@ class Engine:
             key = (voice, text, speed)
             wav = self.cache.get(key)
             if wav is None:
-                language = language_from_voice(voice)
+                wanted = language_from_voice(voice)
                 try:
-                    if language not in phonemizers:
-                        self.set_status(f"loading {language} phonemizer…")
-                        phonemizers[language] = Phonemizer(model.config.vocab, language)
+                    if wanted not in phonemizers:
+                        self.set_status(f"loading {wanted} phonemizer…")
+                    phonemizer, language = phonemizer_for(
+                        model.config.vocab, voice, phonemizers
+                    )
+                    if language != wanted:
+                        # No misaki pack for this language — the speak path
+                        # falls back to en-us too, so preview it that way.
+                        self.unavailable[wanted] = MISAKI_EXTRAS.get(wanted, wanted)
                     self.set_status(f"rendering {voice}…")
                     audio = generate(
                         text, model, model.config, voice_manager,
-                        voice=voice, speed=speed, phonemizer=phonemizers[language],
+                        voice=voice, speed=speed, phonemizer=phonemizer,
                     )
                     if len(audio) == 0:
                         self.set_status(f"{voice}: nothing to speak")
@@ -193,14 +199,6 @@ class Engine:
                     wav = os.path.join(self.tmpdir, f"{voice}-{abs(hash(key)):x}.wav")
                     sf.write(wav, np.asarray(audio), 24000)
                     self.cache[key] = wav
-                except ModuleNotFoundError:
-                    extra = MISAKI_EXTRAS.get(language, language)
-                    self.unavailable[language] = extra
-                    self.set_status(
-                        f"{voice}: {language} needs a language pack — "
-                        f"uv pip install --python {sys.executable} 'misaki[{extra}]'"
-                    )
-                    continue
                 except Exception as exc:
                     self.set_status(f"{voice}: {type(exc).__name__}: {exc}"[:200])
                     continue
@@ -321,7 +319,7 @@ def run(stdscr) -> str | None:
             language, gender = describe(voice)
             marker = "*" if voice == (saved_voice or default_voice) else " "
             extra = engine.unavailable.get(language_from_voice(voice))
-            note = f"   needs misaki[{extra}]" if extra else ""
+            note = f"   en-us fallback — needs misaki[{extra}]" if extra else ""
             line = f" {marker} {voice:<16} {language:<18} {gender:<8}{note}"
             attr = curses.A_REVERSE if index == selected else curses.A_NORMAL
             stdscr.addstr(1 + row, 0, line[: width - 1].ljust(width - 1), attr)

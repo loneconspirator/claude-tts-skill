@@ -43,10 +43,11 @@ except Exception:  # missing wheel / no PortAudio — fall back to afplay
 # (dict lookups, compound splits, miss logging) stays identical.
 SKILL_DIR = Path(__file__).parent
 sys.path.insert(0, str(SKILL_DIR))
-from kokoro_speak import build_segments, synthesize  # noqa: E402
+from kokoro_speak import build_segments, phonemizer_for, synthesize  # noqa: E402
+from tts_config import resolve  # noqa: E402
 
 from kokoro_mlx.model import KokoroModel  # noqa: E402
-from kokoro_mlx.phonemize import Phonemizer  # noqa: E402
+from kokoro_mlx.phonemize import Phonemizer, language_from_voice  # noqa: E402
 from kokoro_mlx.voices import VoiceManager  # noqa: E402
 
 SOCKET_PATH = "/tmp/tts-daemon.sock"
@@ -90,7 +91,7 @@ class State:
             return time.time() - self.last_active
 
 
-def load_model() -> tuple[KokoroModel, VoiceManager, Phonemizer]:
+def load_model() -> tuple[KokoroModel, VoiceManager, dict[str, tuple[Phonemizer, str]]]:
     cache = os.path.expanduser(
         "~/.cache/huggingface/hub/models--mlx-community--Kokoro-82M-bf16/snapshots"
     )
@@ -98,15 +99,19 @@ def load_model() -> tuple[KokoroModel, VoiceManager, Phonemizer]:
     model_path = dirs[-1] if dirs else "mlx-community/Kokoro-82M-bf16"
     model = KokoroModel.from_pretrained(model_path)
     vm = VoiceManager(model_path)
-    phon = Phonemizer(model.config.vocab)
-    return model, vm, phon
+    # Phonemizers are per-language and cost a couple of seconds to build, so
+    # they are cached across jobs and warmed for the configured voice here —
+    # a job arriving later in another language just adds an entry.
+    phonemizers: dict[str, tuple[Phonemizer, str]] = {}
+    phonemizer_for(model.config.vocab, resolve()[0].get("voice", "af_heart"), phonemizers)
+    return model, vm, phonemizers
 
 
 def synth_worker(
     state: State,
     model: KokoroModel,
     vm: VoiceManager,
-    phon: Phonemizer,
+    phonemizers: dict[str, tuple[Phonemizer, str]],
 ) -> None:
     while not state.shutdown.is_set():
         try:
@@ -123,8 +128,12 @@ def synth_worker(
                 log(f"pause {seconds:.2f}s queued")
             else:
                 text, voice, speed = job["text"], job["voice"], job["speed"]
+                phon, language = phonemizer_for(model.config.vocab, voice, phonemizers)
+                if language != language_from_voice(voice):
+                    log(f"no {language_from_voice(voice)} phonemizer; "
+                        f"speaking {voice} as {language}")
                 segments = build_segments(text, phon)
-                audio = synthesize(segments, model, vm, voice, speed)
+                audio = synthesize(segments, model, vm, voice, speed, phon)
                 state.play_q.put(("audio", np.asarray(audio, dtype=np.float32)))
                 log(f"synth OK ({len(text)} chars, {len(audio) / 24000:.2f}s)")
         except Exception as e:  # one bad sentence shouldn't kill the daemon
@@ -392,11 +401,11 @@ def main() -> None:
     log(f"daemon starting (pid {os.getpid()})")
     state = State()
     log("loading model...")
-    model, vm, phon = load_model()
+    model, vm, phonemizers = load_model()
     log("model loaded")
 
     t_synth = threading.Thread(
-        target=synth_worker, args=(state, model, vm, phon), daemon=True
+        target=synth_worker, args=(state, model, vm, phonemizers), daemon=True
     )
     t_play = threading.Thread(target=play_worker, args=(state,), daemon=True)
     t_synth.start()
