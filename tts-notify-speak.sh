@@ -53,6 +53,14 @@ print((d.get('message') or '').strip())
 
 [ -n "${MSG// }" ] || exit 0
 
+# The 60s idle notification ("Claude is waiting for your input") carries no
+# information — after each break it just says the same thing. The user asked
+# that it stay silent; only actual events (permission prompts, subagent
+# input) get spoken.
+case "$MSG" in
+  *"waiting for your input"*) exit 0 ;;
+esac
+
 echo "$(date '+%H:%M:%S') notify: ${MSG}" >> "$LOG"
 "$SKILL_DIR/speak.sh" "$MSG"
 exit 0
