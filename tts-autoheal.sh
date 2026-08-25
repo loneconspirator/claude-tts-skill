@@ -73,8 +73,14 @@ No commentary, no numbering, no markdown. If you cannot pronounce a word confide
 Words:
 '
 
+# timeout(1) is GNU coreutils; macOS doesn't ship it. Use it when present,
+# otherwise run without a cap (claude -p has its own safeguards).
+# TTS_SUPPRESS keeps this nested claude session from firing the Stop hook,
+# which would speak a summary of the curation prompt out of nowhere.
+TIMEOUT_CMD="$(command -v timeout || true)"
+
 RAW="$(printf '%s%s\n' "$PROMPT" "$(awk '{print $1}' <<<"$PENDING")" \
-  | timeout 60 claude -p --model "$HEAL_MODEL" 2>>"$LOG")"
+  | { if [ -n "$TIMEOUT_CMD" ]; then TTS_SUPPRESS=1 "$TIMEOUT_CMD" 60 claude -p --model "$HEAL_MODEL"; else TTS_SUPPRESS=1 claude -p --model "$HEAL_MODEL"; fi; } 2>>"$LOG")"
 
 if [ -z "${RAW// }" ]; then
   echo "$(date '+%H:%M:%S') model returned nothing" >> "$LOG"
