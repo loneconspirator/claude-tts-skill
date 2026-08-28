@@ -71,5 +71,28 @@ case "$MSG" in
 esac
 
 echo "$(date '+%H:%M:%S') notify: ${MSG}" >> "$LOG"
+
+# --- Talky: a stopped agent is the case this product exists for ---
+# The message here is usually near-empty -- across 27 real events, 20 were the
+# bare string "Claude needs your permission" with no tool and no arguments --
+# so the hub reads the pane to find out what it actually wants. Inert unless
+# talky_enabled is true.
+if [ "$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/tts'))
+try:
+    from tts_config import resolve
+    print('yes' if resolve()[0].get('talky_enabled') else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null)" = "yes" ] && [ -f "$HOME/code/talky-dev/talky/talky_send.py" ]; then
+  if printf %s "$PAYLOAD" | python3 "$HOME/code/talky-dev/talky/talky_send.py" \
+       --source notification "$MSG" 2>>"$LOG"; then
+    echo "$(date '+%H:%M:%S') -> talky (notify)" >> "$LOG"
+    exit 0
+  fi
+  echo "$(date '+%H:%M:%S') talky handoff failed, speaking locally" >> "$LOG"
+fi
+
 "$SKILL_DIR/speak.sh" "$MSG"
 exit 0

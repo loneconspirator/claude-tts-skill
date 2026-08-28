@@ -20,10 +20,18 @@ sidelined branches are not read back.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
-WATERMARK = Path("/tmp/tts-stop-speak.spoken-uuid")
+# One global path meant that with several sessions running, whichever wrote
+# last owned the watermark: every other session then read a uuid from someone
+# else's transcript, found nothing after it, undercounted its turn to a few
+# characters, fell under summary_min_chars, and never spoke at all. The Stop
+# hook now points this at a per-session file. The old path stays as the
+# default so a direct call still behaves the way it always did.
+WATERMARK = Path(os.environ.get("TTS_WATERMARK_FILE")
+                 or "/tmp/tts-stop-speak.spoken-uuid")
 
 # Tool calls that mean "the turn ended because Claude needs the user".
 # Their prompt text lives in the tool_use input, not in a text block, so
