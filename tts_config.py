@@ -211,7 +211,7 @@ def main() -> None:
     if "--origin" in args:
         print(f"global:  {GLOBAL_CFG}")
         chain = project_config_chain()
-        print("project: " + ("(none found)" if not chain else ""))
+        print("project: (none found)" if not chain else "project:")
         for i, path in enumerate(chain, 1):
             print(f"  {i}. {path}")
         for k in sorted(merged):
