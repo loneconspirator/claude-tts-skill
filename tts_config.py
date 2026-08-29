@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""Resolve effective TTS config: global defaults + nearest project override.
+"""Resolve effective TTS config: global defaults + every project config above cwd.
 
 Single source of truth for config lookup. Every script that needs a setting
 shells out to this rather than reimplementing the merge — there were six
 copies before, which meant six places to change when the lookup rules moved.
 
-Project config is found by walking up from the current directory to the first
-`.claude/tts-config.json`, so it applies from subdirectories too, the way git
-finds `.git`. The search stops at $HOME (or filesystem root) so a stray config
-in a parent of your whole tree cannot leak into unrelated projects.
+Project config is found by walking up from the current directory collecting
+every `.claude/tts-config.json`, so a setting applies from subdirectories and a
+repo inherits whatever its parent directory sets without having to restate it.
+Nearer files win key by key. The search stops at $HOME (or filesystem root) so
+a stray config in a parent of your whole tree cannot leak past your home
+directory.
+
+Git worktrees splice in their main repo. A worktree at ~/code/project-mybranch
+is a sibling of ~/code/project, not a child, so walking directories alone would
+never see the repo's own config. When the walk reaches a linked worktree's
+root, the main repo root's config is merged directly beneath it — the worktree's
+own settings still win, and the walk then continues up the worktree's ancestry.
+Only the main repo's root directory is consulted, not its ancestors.
 
 The global file is never treated as a project override, even when the cwd is
 inside ~/.claude — otherwise ~/.claude/tts-config.json would shadow itself.
@@ -67,34 +76,119 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def find_project_config(start: Path | None = None) -> Path | None:
-    """Nearest .claude/tts-config.json at or above `start`.
+def worktree_main_root(directory: Path) -> Path | None:
+    """Main repo root, if `directory` is the root of a linked git worktree.
 
-    Walks upward like git's .git discovery. Stops after $HOME so a config in
-    a shared parent directory does not silently apply to everything beneath it.
+    A linked worktree's `.git` is a file reading `gitdir: <main>/.git/worktrees/<name>`,
+    and that directory holds a `commondir` file pointing back at `<main>/.git`.
+    Read those files directly rather than shelling out to git: this runs on
+    every hook, once per ancestor, and a subprocess each time is a cost the
+    lookup does not need to pay.
+
+    Returns None for an ordinary repo, a submodule (its gitdir has no
+    `commondir`), or a bare main repo (no working tree to hold a config).
+    """
+    dot_git = directory / ".git"
+    try:
+        if not dot_git.is_file():
+            return None
+        pointer = dot_git.read_text(errors="replace").strip()
+    except OSError:
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+
+    gitdir = Path(pointer[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = directory / gitdir
+
+    try:
+        common = Path((gitdir / "commondir").read_text().strip())
+    except OSError:
+        return None
+    if not common.is_absolute():
+        common = gitdir / common
+    try:
+        common = common.resolve()
+    except OSError:
+        return None
+
+    if common.name != ".git":
+        return None
+    return common.parent
+
+
+def project_config_chain(start: Path | None = None) -> list[Path]:
+    """Every project `.claude/tts-config.json` that applies at `start`, nearest first.
+
+    Walks upward like git's .git discovery, but collects the whole chain rather
+    than stopping at the first hit, and splices a linked worktree's main repo in
+    directly below the worktree root. Stops after $HOME. The global config is
+    excluded — `resolve` layers that in underneath the whole chain.
     """
     try:
         current = (start or Path.cwd()).resolve()
     except Exception:
-        return None
+        return []
 
     home = Path.home().resolve()
-    for directory in [current, *current.parents]:
+    try:
+        global_cfg = GLOBAL_CFG.resolve()
+    except OSError:
+        global_cfg = GLOBAL_CFG
+
+    chain: list[Path] = []
+    seen: set[Path] = set()
+
+    def collect(directory: Path) -> None:
         candidate = directory / PROJECT_REL
-        if candidate.is_file() and candidate.resolve() != GLOBAL_CFG.resolve():
-            return candidate
+        try:
+            if not candidate.is_file():
+                return
+            resolved = candidate.resolve()
+        except OSError:
+            return
+        if resolved == global_cfg or resolved in seen:
+            return
+        seen.add(resolved)
+        chain.append(candidate)
+
+    for directory in [current, *current.parents]:
+        collect(directory)
+        main_root = worktree_main_root(directory)
+        if main_root is not None:
+            collect(main_root)
         if directory == home:
             break
-    return None
+    return chain
+
+
+def find_project_config(start: Path | None = None) -> Path | None:
+    """Nearest project config, the one whose settings beat every other file."""
+    chain = project_config_chain(start)
+    return chain[0] if chain else None
+
+
+def _origin_label(path: Path) -> str:
+    """Readable origin for a config: the directory it governs, $HOME abbreviated."""
+    project_dir = path.parent.parent
+    try:
+        return "~/" + str(project_dir.relative_to(Path.home()))
+    except ValueError:
+        return str(project_dir)
 
 
 def resolve(start: Path | None = None) -> tuple[dict, dict]:
-    """Return (merged config, {key: origin}) where origin is default/global/project."""
+    """Return (merged config, {key: origin}) where origin is default/global/project dir."""
     merged = dict(DEFAULTS)
     origin = {k: "default" for k in DEFAULTS}
 
-    for value, label in ((_load(GLOBAL_CFG), "global"),
-                         (_load(p) if (p := find_project_config(start)) else {}, "project")):
+    # Farthest first, so each nearer file overwrites what the last one set.
+    layers = [(_load(GLOBAL_CFG), "global")]
+    for path in reversed(project_config_chain(start)):
+        layers.append((_load(path), _origin_label(path)))
+
+    for value, label in layers:
         for k, v in value.items():
             merged[k] = v
             origin[k] = label
@@ -115,9 +209,11 @@ def main() -> None:
         return
 
     if "--origin" in args:
-        project = find_project_config()
         print(f"global:  {GLOBAL_CFG}")
-        print(f"project: {project or '(none found)'}")
+        chain = project_config_chain()
+        print("project: " + ("(none found)" if not chain else ""))
+        for i, path in enumerate(chain, 1):
+            print(f"  {i}. {path}")
         for k in sorted(merged):
             print(f"  {k:20} = {str(merged[k]):32} ({origin[k]})")
         return

@@ -13,12 +13,32 @@ Manage text-to-speech for Claude's responses.
 
 ## Config Layering
 
-Two config files, project overrides global:
+Configs coalesce. Start from the global file, then overlay every
+`.claude/tts-config.json` found walking up from the current directory, nearer
+files winning key by key. A repo that sets only `voice` still inherits `speed`
+from its parent directory.
 
-1. **Global**: `~/.claude/tts-config.json` — user-wide defaults
-2. **Project**: `.claude/tts-config.json` — per-project overrides (optional)
+- **Global**: `~/.claude/tts-config.json` — user-wide defaults, lowest precedence
+- **Project**: `.claude/tts-config.json` — every one at or above the cwd, up to `$HOME`
+- **Worktrees**: at the root of a linked git worktree, the main repo's root config is
+  merged in directly beneath the worktree's own, then the walk continues up the
+  worktree's ancestry. Only the repo root is consulted, not its ancestors — a
+  worktree at `~/code/project-mybranch` is a sibling of `~/code/project`, so
+  directory walking alone would never find the repo's config.
 
-Effective config = global values merged with project values (project wins on conflicts).
+Precedence from `~/code/project-mybranch/src` (worktree of `~/code/project`),
+highest first:
+
+```
+~/code/project-mybranch/src/.claude/tts-config.json
+~/code/project-mybranch/.claude/tts-config.json
+~/code/project/.claude/tts-config.json
+~/code/.claude/tts-config.json
+~/.claude/tts-config.json                            (the global file)
+```
+
+`python3 ~/.claude/skills/tts/tts_config.py --origin` prints the chain that
+applies here and which file each value came from.
 
 ### Config fields
 
@@ -85,7 +105,7 @@ Parse the user's arguments (available as `$ARGUMENTS`):
 - `/tts` (no args) — Toggle enabled on/off.
 
 Add `--global` or `--project` flag to target a specific config file. Default behavior:
-- **Without flag**: writes to project config (`.claude/tts-config.json`) if it exists, otherwise global (`~/.claude/tts-config.json`)
+- **Without flag**: writes to the nearest project config (`.claude/tts-config.json` at or above the cwd) if one exists, otherwise global (`~/.claude/tts-config.json`). Writes stay where the command was called — a worktree's setting is never written into its main repo.
 - `/tts voice am_adam --global` — sets voice in global config
 - `/tts engine qwen --project` — sets engine in project config
 
@@ -93,9 +113,9 @@ Add `--global` or `--project` flag to target a specific config file. Default beh
 
 ### Reading effective config
 
-1. Read `~/.claude/tts-config.json` (global defaults)
-2. Read `.claude/tts-config.json` (project overrides, may not exist)
-3. Merge: start with global, overlay any keys present in project config
+Run `python3 ~/.claude/skills/tts/tts_config.py --json` (or `--origin` to see
+where each value came from). That script owns the upward walk, the worktree
+splice, and the merge — do not reimplement the layering anywhere else.
 
 ### Writing config changes
 

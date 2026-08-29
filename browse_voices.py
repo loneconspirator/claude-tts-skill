@@ -92,9 +92,10 @@ def load_config(path: Path | None) -> dict:
 def project_config_path(start: Path | None = None) -> Path | None:
     """Where this project's tts-config.json lives, or would live.
 
-    `tts_config.find_project_config` only reports a config that already
-    exists; the browser also has to write the first one, so it looks for the
-    nearest ancestor `.claude` directory instead. ~/.claude is skipped — that
+    `tts_config` only reports configs that already exist; the browser also has
+    to write the first one, so it looks for the nearest ancestor `.claude`
+    directory instead. Saves stay local to where the browser was launched — a
+    worktree reads its main repo's config but never writes back into it. ~/.claude is skipped — that
     one holds the global config, not a project's — and the walk stops at $HOME
     for the same reason the config lookup does.
     """
