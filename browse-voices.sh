@@ -5,7 +5,15 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve $0 through any symlinks so SCRIPT_DIR is the real skill dir,
+# not wherever the symlink lives (e.g. ~/.local/bin/voices).
+SOURCE="$0"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 eval "$(python3 "$SCRIPT_DIR/tts_config.py" engine kokoro_python 2>/dev/null)"
 
