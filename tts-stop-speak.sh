@@ -60,6 +60,7 @@ out = {
     'SUMMARY_MODEL': cfg.get('summary_model', 'claude-haiku-4-5-20251001'),
     'SUMMARY_PROMPT': cfg.get('summary_prompt', ''),
     'SUMMARY_MIN_CHARS': str(cfg.get('summary_min_chars', 200)),
+    'SUMMARY_WORD_CAP': str(cfg.get('summary_word_cap', 45)),
 }
 for k, v in out.items():
     print(f'{k}={shlex.quote(str(v))}')
@@ -71,6 +72,11 @@ PY
 if [ -z "$SUMMARY_PROMPT" ]; then
   SUMMARY_PROMPT="$(cat "$SKILL_DIR/summary-prompt.txt")"
 fi
+
+# The prompt names its cap with a placeholder so the number lives in config
+# rather than in prose. Talky reads the same file and substitutes its own
+# per-item budget; this is the substitution for every other project.
+SUMMARY_PROMPT="${SUMMARY_PROMPT//\{WORD_CAP\}/$SUMMARY_WORD_CAP}"
 
 [ "$ENABLED" = "yes" ] || exit 0
 

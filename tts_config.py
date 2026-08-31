@@ -51,6 +51,10 @@ DEFAULTS: dict = {
     "heal_max_words": 12,
     "summary_model": "claude-haiku-4-5-20251001",
     "summary_min_chars": 200,
+    # Substituted into summary-prompt.txt wherever {WORD_CAP} appears, so the
+    # prompt carries one number and it is this one. Talky reads the same file
+    # and substitutes its own per-item budget instead.
+    "summary_word_cap": 45,
     # Sessions whose cwd matches one of these stay silent. Probe and
     # background sessions run in a scratchpad directory and would
     # otherwise speak over the interactive session that spawned them.
