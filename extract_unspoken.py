@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import json
 import sys
+import os
 from pathlib import Path
 
-WATERMARK = Path("/tmp/tts-stop-speak.spoken-uuid")
+WATERMARK = Path(os.environ.get("TTS_WATERMARK_FILE")
+                 or "/tmp/tts-stop-speak.spoken-uuid")
 
 # Tool calls that mean "the turn ended because Claude needs the user".
 # Their prompt text lives in the tool_use input, not in a text block, so

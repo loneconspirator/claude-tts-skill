@@ -88,7 +88,18 @@ fi
 # watermark on stderr. The watermark is only committed once the text has
 # actually been handed to speak.sh, so a crash or a failed condense leaves the
 # text pending for the next turn rather than silently swallowing it.
+# Per session, not global: two sessions ending at once otherwise read and
+# overwrite each other's mark, and one of them re-speaks a turn the other
+# already spoke. extract_unspoken.py honors the same variable.
 WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid"
+TTS_SESSION_ID="$(printf %s "$PAYLOAD" | python3 -c "
+import json, sys
+try: print((json.load(sys.stdin).get('session_id') or '').strip())
+except Exception: pass
+" 2>/dev/null)"
+[ -n "$TTS_SESSION_ID" ] && \
+  WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid.$TTS_SESSION_ID"
+export TTS_WATERMARK_FILE="$WATERMARK_FILE"
 EXTRACT_ERR="$(mktemp -t tts-extract)"
 TEXT="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/extract_unspoken.py" 2>"$EXTRACT_ERR")"
 NEW_MARK="$(cat "$EXTRACT_ERR" 2>/dev/null | tr -d '\n')"
@@ -101,6 +112,43 @@ IS_QUESTION=no
 if [ "${TEXT%%$'\n'*}" = "[[TTS_QUESTION]]" ]; then
   IS_QUESTION=yes
   TEXT="${TEXT#*$'\n'}"
+fi
+
+
+# --- Talky handoff ------------------------------------------------------
+# Offer the turn to the Talky hub, which serializes and attributes it across
+# the whole fleet. Deliberately ABOVE the minimum-characters floor and above
+# the condense: a short reply still has to reach the hub (it is what opens the
+# microphone window), and the hub picks its own condense backend.
+#
+# Exit 0 means Talky owns this turn and will speak it. Anything else -- no hub
+# listening, a broken Talky, a subagent -- falls through to everything below,
+# which is the pre-Talky behavior unchanged. A dead hub costs attribution and
+# ordering, never the message.
+TALKY_SEND="/Users/mike/git/talky-dev/talky/talky_send.py"
+if [ -f "$TALKY_SEND" ] && [ "$(python3 - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, "/Users/mike/git/talky-dev")
+try:
+    from talky import config
+    print("yes" if config.resolve().get("talky_enabled") else "no")
+except Exception:
+    print("no")
+PY
+)" = "yes" ]; then
+  TALKY_ARGS=(--source stop)
+  [ "$IS_QUESTION" = "yes" ] && TALKY_ARGS+=(--question)
+  if printf %s "$PAYLOAD" | PYTHONPATH="/Users/mike/git/talky-dev" python3 "$TALKY_SEND"        "${TALKY_ARGS[@]}" "$TEXT"; then
+    echo "$(date '+%H:%M:%S') handed to talky (${CHARS}ch)" >> "$LOG"
+    # The watermark is committed here for the same reason it is committed
+    # before speak.sh below: the text has been handed to something that will
+    # say it, so the next turn must not repeat it.
+    if [ -n "$NEW_MARK" ]; then
+      printf %s "$NEW_MARK" > "$WATERMARK_FILE" 2>/dev/null || true
+    fi
+    exit 0
+  fi
+  echo "$(date '+%H:%M:%S') talky declined, speaking locally" >> "$LOG"
 fi
 
 # Nothing to say, or too short to be worth a model call and 8s of latency.

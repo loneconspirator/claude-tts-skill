@@ -70,6 +70,27 @@ case "$MSG" in
   *"waiting for your input"*) exit 0 ;;
 esac
 
+# --- Talky handoff ------------------------------------------------------
+# Same contract as the Stop hook: exit 0 means the hub owns it, anything else
+# falls through to the local speak.sh below.
+TALKY_SEND="/Users/mike/git/talky-dev/talky/talky_send.py"
+if [ -f "$TALKY_SEND" ] && [ "$(python3 - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, "/Users/mike/git/talky-dev")
+try:
+    from talky import config
+    print("yes" if config.resolve().get("talky_enabled") else "no")
+except Exception:
+    print("no")
+PY
+)" = "yes" ]; then
+  if printf %s "$PAYLOAD" | PYTHONPATH="/Users/mike/git/talky-dev" python3 "$TALKY_SEND"        --source notification "$MSG"; then
+    echo "$(date '+%H:%M:%S') notify handed to talky: ${MSG}" >> "$LOG"
+    exit 0
+  fi
+  echo "$(date '+%H:%M:%S') talky declined notify, speaking locally" >> "$LOG"
+fi
+
 echo "$(date '+%H:%M:%S') notify: ${MSG}" >> "$LOG"
 "$SKILL_DIR/speak.sh" "$MSG"
 exit 0
