@@ -43,11 +43,18 @@ except Exception:  # missing wheel / no PortAudio — fall back to afplay
 # (dict lookups, compound splits, miss logging) stays identical.
 SKILL_DIR = Path(__file__).parent
 sys.path.insert(0, str(SKILL_DIR))
-from kokoro_speak import build_segments, phonemizer_for, synthesize  # noqa: E402
+# language_from_voice comes from kokoro_speak, not from kokoro_mlx: 0.1.1
+# dropped it, and kokoro_speak carries the fallback. Importing it from the
+# package here defeated that -- the daemon died on this line at startup while
+# speak.sh went on enqueueing and logging, so the failure looked like silence
+# rather than an error.
+from kokoro_speak import (  # noqa: E402
+    build_segments, language_from_voice, phonemizer_for, synthesize,
+)
 from tts_config import resolve  # noqa: E402
 
 from kokoro_mlx.model import KokoroModel  # noqa: E402
-from kokoro_mlx.phonemize import Phonemizer, language_from_voice  # noqa: E402
+from kokoro_mlx.phonemize import Phonemizer  # noqa: E402
 from kokoro_mlx.voices import VoiceManager  # noqa: E402
 
 SOCKET_PATH = "/tmp/tts-daemon.sock"

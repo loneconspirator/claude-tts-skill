@@ -28,7 +28,34 @@ import numpy as np
 import soundfile as sf
 from kokoro_mlx.generate import generate
 from kokoro_mlx.model import KokoroModel
-from kokoro_mlx.phonemize import Phonemizer, language_from_voice
+from kokoro_mlx.phonemize import Phonemizer
+
+# kokoro-mlx 0.1.1 dropped `language_from_voice` from the phonemize module and
+# narrowed Phonemizer to language="en" only. The import failure took the whole
+# daemon down at startup, which reads from the outside as silence: speak.sh
+# still enqueues, still logs the text, and nothing ever comes out.
+#
+# Prefer the package's own helper wherever it still exists -- a later version
+# that puts it back should win over this copy -- and otherwise derive the
+# language from the voice prefix the way the skill's own docs describe.
+try:  # pragma: no cover - depends on the installed kokoro-mlx
+    from kokoro_mlx.phonemize import language_from_voice
+except ImportError:
+    _VOICE_LANGUAGES = {
+        "a": "en-us",   # American
+        "b": "en-gb",   # British
+        "e": "es",
+        "f": "fr-fr",
+        "h": "hi",
+        "i": "it",
+        "j": "ja",
+        "p": "pt-br",
+        "z": "zh",
+    }
+
+    def language_from_voice(voice: str) -> str:
+        """The language a voice's prefix asks for. `af_heart` -> `en-us`."""
+        return _VOICE_LANGUAGES.get(voice[:1], "en-us")
 from kokoro_mlx.voices import VoiceManager
 
 SKILL_DIR = Path(__file__).parent
@@ -79,11 +106,29 @@ def phonemizer_for(
         entry = (Phonemizer(vocab, requested), requested)
     except Exception:
         entry = cache.get(DEFAULT_LANGUAGE) or (
-            Phonemizer(vocab, DEFAULT_LANGUAGE), DEFAULT_LANGUAGE
+            _english_phonemizer(vocab), DEFAULT_LANGUAGE
         )
         cache[DEFAULT_LANGUAGE] = entry
     cache[requested] = entry
     return entry
+
+
+def _english_phonemizer(vocab: dict[str, int]) -> Phonemizer:
+    """Build the en-us fallback across both Phonemizer signatures.
+
+    kokoro-mlx 0.1.1 accepts only `language="en"` and raises ValueError on the
+    regional tags earlier versions took, so a fallback hardcoded to "en-us"
+    raises inside the handler for the original failure and takes the daemon
+    down anyway. Try each spelling and use whichever the installed version
+    understands.
+    """
+    for language in (DEFAULT_LANGUAGE, "en"):
+        try:
+            return Phonemizer(vocab, language)
+        except Exception:
+            continue
+    # Let the real error out rather than reporting a confusing fallback error.
+    return Phonemizer(vocab, DEFAULT_LANGUAGE)
 
 
 def load_dict() -> dict[str, str]:

@@ -44,7 +44,9 @@ import tempfile
 import threading
 from pathlib import Path
 
-from kokoro_mlx.phonemize import language_from_voice
+# From kokoro_speak, which carries the fallback for kokoro-mlx 0.1.1
+# having dropped this helper. See the note there.
+from kokoro_speak import language_from_voice
 from kokoro_speak import phonemizer_for
 from tts_config import DEFAULTS, GLOBAL_CFG, resolve
 
