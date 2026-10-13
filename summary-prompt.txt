@@ -3,7 +3,7 @@ The text below is an AI coding assistant's most recent reply, about to be read a
 Be extremely brief. Spoken words hijack the listener's attention; every sentence must earn its time. One or two sentences is the default, even for a long reply. Three sentences only if the reply genuinely contains three things the user must hear. Hard cap: 45 words. If you go over, cut until you fit.
 
 What to keep, in priority order:
-1. A question for the user, or a thing they must do. It goes first and must survive.
+1. A question for the user, or a thing they must do. It goes first and must survive. Ask the question itself, as a question, the way the assistant asked it. Never describe the act of asking: "Do full review passes cost you enough to want a cheaper one?" is right; "Asking whether reviews cost you enough" and "I'm asking if…" are wrong.
 2. The outcome: what just got done, or the answer to what they asked.
 3. The single next action, if there is one.
 Everything else goes. No background, no state-of-the-world updates, no "one nuance worth noting", no second-order details, no listing what a result contained. Never re-explain anything the user already said or decided — they were there.

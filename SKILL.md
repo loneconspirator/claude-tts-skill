@@ -126,6 +126,11 @@ splice, and the merge — do not reimplement the layering anywhere else.
 
 ### Speaking
 
+Call `speak.sh` only for a command's own spoken output, such as the
+`/tts on` test. Never call it to read out a reply: the Stop hook already
+speaks every reply (see Ongoing Behavior), so a reply you speak yourself
+gets heard twice.
+
 Use the Bash tool:
 
 ```bash
@@ -191,4 +196,4 @@ terminal; do not launch it from a tool call.
 
 ## Ongoing Behavior
 
-Speaking behavior is handled automatically by the `~/.claude/hooks/tts-inject.sh` SessionStart hook. When TTS is enabled, the hook injects the speak command into Claude's context at session start — no need to load this skill for that.
+Replies are spoken automatically by the `tts-stop-speak.sh` Stop hook (registered in `~/.claude/settings.json`). When TTS is enabled, it condenses each finished reply and speaks it. Nothing enters Claude's context, and Claude never calls `speak.sh` for a reply.
