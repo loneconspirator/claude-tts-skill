@@ -43,13 +43,12 @@ except Exception:  # missing wheel / no PortAudio — fall back to afplay
 # (dict lookups, compound splits, miss logging) stays identical.
 SKILL_DIR = Path(__file__).parent
 sys.path.insert(0, str(SKILL_DIR))
-# language_from_voice comes from kokoro_speak, not from kokoro_mlx: 0.1.1
-# dropped it, and kokoro_speak carries the fallback. Importing it from the
-# package here defeated that -- the daemon died on this line at startup while
-# speak.sh went on enqueueing and logging, so the failure looked like silence
-# rather than an error.
+# Everything about voices and languages comes from kokoro_speak, not from
+# kokoro_mlx: 0.1.1 dropped `language_from_voice`, and importing it from the
+# package here killed the daemon at startup while speak.sh went on enqueueing
+# and logging, so the failure looked like silence rather than an error.
 from kokoro_speak import (  # noqa: E402
-    build_segments, language_from_voice, phonemizer_for, synthesize,
+    build_segments, phoneme_language, phonemizer_for, synthesize,
 )
 from tts_config import resolve  # noqa: E402
 
@@ -106,9 +105,9 @@ def load_model() -> tuple[KokoroModel, VoiceManager, dict[str, tuple[Phonemizer,
     model_path = dirs[-1] if dirs else "mlx-community/Kokoro-82M-bf16"
     model = KokoroModel.from_pretrained(model_path)
     vm = VoiceManager(model_path)
-    # Phonemizers are per-language and cost a couple of seconds to build, so
-    # they are cached across jobs and warmed for the configured voice here —
-    # a job arriving later in another language just adds an entry.
+    # Phonemizers cost a couple of seconds to build, so they are cached across
+    # jobs and warmed for the configured voice here. There are at most two
+    # (en-us, en-gb): see kokoro_speak.phoneme_language.
     phonemizers: dict[str, tuple[Phonemizer, str]] = {}
     phonemizer_for(model.config.vocab, resolve()[0].get("voice", "af_heart"), phonemizers)
     return model, vm, phonemizers
@@ -136,8 +135,8 @@ def synth_worker(
             else:
                 text, voice, speed = job["text"], job["voice"], job["speed"]
                 phon, language = phonemizer_for(model.config.vocab, voice, phonemizers)
-                if language != language_from_voice(voice):
-                    log(f"no {language_from_voice(voice)} phonemizer; "
+                if language != phoneme_language(voice):
+                    log(f"no {phoneme_language(voice)} phonemizer; "
                         f"speaking {voice} as {language}")
                 segments = build_segments(text, phon)
                 audio = synthesize(segments, model, vm, voice, speed, phon)

@@ -37,7 +37,7 @@ Effective config = global values merged with project values (project wins on con
 ### Kokoro (default)
 - Speed control **actually works** (0.5 to 2.0)
 - 54 voices. Common ones: `af_heart`, `af_bella`, `af_nova`, `am_adam`, `am_michael`, `bf_emma`, `bm_george`
-- The phonemizer follows the voice's language prefix (`af`/`am` en-us, `bf`/`bm` en-gb, `ef` es, `jf` ja, …). Japanese and Chinese need optional misaki packs — without them those voices fall back to en-us phonemes (`uv pip install --python ~/.claude/tts-venv/bin/python 'misaki[ja]'` installs one).
+- Text is phonemized as English for every voice: `bf`/`bm` voices use en-gb, all others en-us. A non-English voice (`if_sara`, `zm_yunjian`, …) keeps its accent and reads English words; it does not read English with its own language's phonemes. No misaki language packs are needed.
 - Prefix meanings: `af_` = American female, `am_` = American male, `bf_` = British female, `bm_` = British male
 - Runs via venv at `~/.claude/tts-venv/bin/python`
 - No style/instruct support

@@ -1,9 +1,8 @@
 """Kokoro TTS speak path with phonemizer-miss fallback.
 
-The phonemizer follows the voice: Kokoro voices carry their language in the
-name prefix, and a Spanish voice was trained on Spanish phonemes. When that
-language needs an optional misaki pack that isn't installed (Japanese, Chinese)
-we fall back to en-us and let the dictionary carry the pronunciation.
+The text is English, so the phonemes are English for every voice: en-gb for
+the British voices, en-us for the rest. A non-English voice keeps its own
+timbre and accent and reads English words (see `phoneme_language`).
 
 Strategy when a word phonemizes to nothing:
   1. Look it up in phonemizer-dict.json (user-curated substitutions).
@@ -81,25 +80,36 @@ COMPOUND_SUFFIXES = [
 DEFAULT_LANGUAGE = "en-us"
 
 
+def phoneme_language(voice: str) -> str:
+    """The language a voice's text is phonemized in: English, always.
+
+    The text this skill speaks is English whatever voice reads it. A voice's
+    prefix names the language it was trained on, not the language of the text,
+    and phonemizing English as Italian makes `if_sara` read English words with
+    Italian sounds -- which kokoro-mlx 0.1.4 does, since it can build an
+    Italian phonemizer (0.1.1 could build only English, so every voice fell
+    back to en-us and nobody noticed the choice being made). The voice keeps
+    its timbre and accent; only the phonemes are English. British voices keep
+    en-gb, the one regional difference that is still English.
+    """
+    return "en-gb" if language_from_voice(voice) == "en-gb" else DEFAULT_LANGUAGE
+
+
 def phonemizer_for(
     vocab: dict[str, int],
     voice: str,
     cache: dict[str, tuple[Phonemizer, str]] | None = None,
 ) -> tuple[Phonemizer, str]:
-    """The phonemizer for a voice's own language, and the language it uses.
+    """The English phonemizer for a voice, and the language it uses.
 
-    Japanese and Chinese phonemization lives in optional misaki packs
-    (`misaki[ja]`, `misaki[zh]`). When the pack is missing there is no
-    language phonemizer to build, so this falls back to en-us — the voice
-    then reads its text the way an English speaker would, which the
-    dictionary and the miss-repair path can still be pointed at.
-
-    The returned language is the one actually in use; compare it against
-    `language_from_voice(voice)` to notice a fallback. Building a phonemizer
-    costs a couple of seconds, so long-lived callers should pass a `cache`.
+    See `phoneme_language` for why it is English for every voice. When en-gb
+    cannot be built this falls back to en-us. The returned language is the one
+    actually in use; compare it against `phoneme_language(voice)` to notice a
+    fallback. Building a phonemizer costs a couple of seconds, so long-lived
+    callers should pass a `cache`.
     """
     cache = {} if cache is None else cache
-    requested = language_from_voice(voice)
+    requested = phoneme_language(voice)
     if requested in cache:
         return cache[requested]
     try:
@@ -362,10 +372,10 @@ def main() -> None:
     model = KokoroModel.from_pretrained(model_path)
     vm = VoiceManager(model_path)
     phonemizer, language = phonemizer_for(model.config.vocab, voice)
-    if language != language_from_voice(voice):
+    if language != phoneme_language(voice):
         print(
-            f"kokoro: no {language_from_voice(voice)} phonemizer installed "
-            f"(misaki extra missing); speaking {voice} as {language}",
+            f"kokoro: no {phoneme_language(voice)} phonemizer; "
+            f"speaking {voice} as {language}",
             file=sys.stderr,
         )
 

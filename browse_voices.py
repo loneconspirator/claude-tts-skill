@@ -6,8 +6,8 @@ loads once in a background thread and every rendered sample is cached, so
 re-selecting a voice replays instantly.
 
 Previews go through the same phonemizer choice as the real speak path
-(`kokoro_speak.phonemizer_for`): each voice's own language when that language
-is installed, en-us otherwise. So what you hear here is what you will get.
+(`kokoro_speak.phonemizer_for`): English phonemes for every voice, en-gb for
+the British ones. So what you hear here is what you will get.
 
 Each voice introduces itself in English — English is what the speak path
 will hand it — so you hear the accent, not a translation; `t` swaps in your
@@ -46,7 +46,6 @@ from pathlib import Path
 
 # From kokoro_speak, which carries the fallback for kokoro-mlx 0.1.1
 # having dropped this helper. See the note there.
-from kokoro_speak import language_from_voice
 from kokoro_speak import phonemizer_for
 from tts_config import DEFAULTS, GLOBAL_CFG, resolve
 
@@ -77,9 +76,6 @@ DEMONYMS = {
     "Hindi": "Indian",
 }
 
-
-# Japanese and Chinese need optional misaki extras; the rest ship with it.
-MISAKI_EXTRAS = {"ja": "ja", "zh": "zh"}
 
 
 def load_config(path: Path | None) -> dict:
@@ -149,7 +145,6 @@ class Engine:
         self.cache: dict[tuple[str, str, float], str] = {}
         self.tmpdir = tempfile.mkdtemp(prefix="kokoro-voices-")
         self.voices: list[str] = []
-        self.unavailable: dict[str, str] = {}
         threading.Thread(target=self._run, daemon=True).start()
 
     def request(self, voice: str, text: str, speed: float) -> None:
@@ -211,17 +206,12 @@ class Engine:
             key = (voice, text, speed)
             wav = self.cache.get(key)
             if wav is None:
-                wanted = language_from_voice(voice)
                 try:
-                    if wanted not in phonemizers:
-                        self.set_status(f"loading {wanted} phonemizer…")
-                    phonemizer, language = phonemizer_for(
+                    if not phonemizers:
+                        self.set_status("loading phonemizer…")
+                    phonemizer, _ = phonemizer_for(
                         model.config.vocab, voice, phonemizers
                     )
-                    if language != wanted:
-                        # No misaki pack for this language — the speak path
-                        # falls back to en-us too, so preview it that way.
-                        self.unavailable[wanted] = MISAKI_EXTRAS.get(wanted, wanted)
                     self.set_status(f"rendering {voice}…")
                     audio = generate(
                         text, model, model.config, voice_manager,
@@ -439,9 +429,7 @@ def run(stdscr) -> dict[Path, str]:
             voice = voices[index]
             language, gender = describe(voice)
             marker = "*" if voice == (project_voice or global_voice) else " "
-            extra = engine.unavailable.get(language_from_voice(voice))
-            note = f"   en-us fallback — needs misaki[{extra}]" if extra else ""
-            line = f" {marker} {voice:<16} {language:<18} {gender:<8}{note}"
+            line = f" {marker} {voice:<16} {language:<18} {gender:<8}"
             attr = curses.A_REVERSE if index == selected else curses.A_NORMAL
             stdscr.addstr(1 + row, 0, line[: width - 1].ljust(width - 1), attr)
 
