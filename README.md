@@ -74,10 +74,15 @@ The hook is a no-op when TTS is disabled, so it's safe to leave wired up permane
 
 ## Configuration
 
-Two config files (project overrides global):
+Configs coalesce, nearest wins:
 
 - **Global**: `~/.claude/tts-config.json`
-- **Project**: `.claude/tts-config.json` (optional, per-repo)
+- **Project**: `.claude/tts-config.json` — every one at or above the cwd, up to `$HOME`
+- **Worktrees**: a linked worktree also inherits its main repo's root config, ranked
+  just below the worktree's own
+
+Run `python3 ~/.claude/skills/tts/tts_config.py --origin` to see the chain in effect
+and which file each value came from.
 
 All fields are optional. Common ones:
 

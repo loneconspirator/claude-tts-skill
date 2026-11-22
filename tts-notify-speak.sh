@@ -70,27 +70,38 @@ case "$MSG" in
   *"waiting for your input"*) exit 0 ;;
 esac
 
-# --- Talky handoff ------------------------------------------------------
-# Same contract as the Stop hook: exit 0 means the hub owns it, anything else
-# falls through to the local speak.sh below.
-TALKY_SEND="/Users/mike/git/talky-dev/talky/talky_send.py"
-if [ -f "$TALKY_SEND" ] && [ "$(python3 - <<'PY' 2>/dev/null
-import sys
-sys.path.insert(0, "/Users/mike/git/talky-dev")
+echo "$(date '+%H:%M:%S') notify: ${MSG}" >> "$LOG"
+
+# --- Talky: a stopped agent is the case this product exists for ---
+# The message here is usually near-empty -- across 27 real events, 20 were the
+# bare string "Claude needs your permission" with no tool and no arguments --
+# so the hub reads the pane to find out what it actually wants. Inert unless
+# talky_enabled is true.
+# The checkout lives at ~/git/talky-dev on one machine and ~/code/talky-dev on
+# another; a hardcoded path silently turned the handoff off on the other one.
+TALKY_SEND=""
+for _d in "${TALKY_HOME:-}" "$HOME/git/talky-dev" "$HOME/code/talky-dev"; do
+  if [ -n "$_d" ] && [ -f "$_d/talky/talky_send.py" ]; then
+    TALKY_SEND="$_d/talky/talky_send.py"
+    break
+  fi
+done
+if [ "$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/tts'))
 try:
-    from talky import config
-    print("yes" if config.resolve().get("talky_enabled") else "no")
+    from tts_config import resolve
+    print('yes' if resolve()[0].get('talky_enabled') else 'no')
 except Exception:
-    print("no")
-PY
-)" = "yes" ]; then
-  if printf %s "$PAYLOAD" | PYTHONPATH="/Users/mike/git/talky-dev" python3 "$TALKY_SEND"        --source notification "$MSG"; then
-    echo "$(date '+%H:%M:%S') notify handed to talky: ${MSG}" >> "$LOG"
+    print('no')
+" 2>/dev/null)" = "yes" ] && [ -n "$TALKY_SEND" ]; then
+  if printf %s "$PAYLOAD" | python3 "$TALKY_SEND" \
+       --source notification "$MSG" 2>>"$LOG"; then
+    echo "$(date '+%H:%M:%S') -> talky (notify)" >> "$LOG"
     exit 0
   fi
-  echo "$(date '+%H:%M:%S') talky declined notify, speaking locally" >> "$LOG"
+  echo "$(date '+%H:%M:%S') talky handoff failed, speaking locally" >> "$LOG"
 fi
 
-echo "$(date '+%H:%M:%S') notify: ${MSG}" >> "$LOG"
 "$SKILL_DIR/speak.sh" "$MSG"
 exit 0

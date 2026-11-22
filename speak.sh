@@ -37,7 +37,7 @@ if [ -z "${TEXT// }" ]; then
   exit 0
 fi
 
-# --- Merge config (nearest project config overrides global) ---
+# --- Merge config (global, then each project config up the tree; nearest wins) ---
 # tts_config.py owns the lookup rules, including the walk up the directory
 # tree. It emits uppercase KEY=value; the lowercase names below are what the
 # rest of this script expects.

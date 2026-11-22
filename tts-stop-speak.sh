@@ -94,17 +94,15 @@ fi
 # watermark on stderr. The watermark is only committed once the text has
 # actually been handed to speak.sh, so a crash or a failed condense leaves the
 # text pending for the next turn rather than silently swallowing it.
-# Per session, not global: two sessions ending at once otherwise read and
-# overwrite each other's mark, and one of them re-speaks a turn the other
-# already spoke. extract_unspoken.py honors the same variable.
-WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid"
-TTS_SESSION_ID="$(printf %s "$PAYLOAD" | python3 -c "
-import json, sys
-try: print((json.load(sys.stdin).get('session_id') or '').strip())
-except Exception: pass
+# Per session, not global. See the note in extract_unspoken.py: a single
+# shared path silently swallowed whole turns whenever two sessions ran at once.
+_SESSION="$(printf %s "$PAYLOAD" | python3 -c "
+import json, re, sys
+try: sid = json.load(sys.stdin).get('session_id') or ''
+except Exception: sid = ''
+print(re.sub(r'[^A-Za-z0-9_-]', '', str(sid))[:40])
 " 2>/dev/null)"
-[ -n "$TTS_SESSION_ID" ] && \
-  WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid.$TTS_SESSION_ID"
+WATERMARK_FILE="/tmp/tts-stop-speak.spoken-uuid${_SESSION:+.$_SESSION}"
 export TTS_WATERMARK_FILE="$WATERMARK_FILE"
 EXTRACT_ERR="$(mktemp -t tts-extract)"
 TEXT="$(printf %s "$PAYLOAD" | python3 "$SKILL_DIR/extract_unspoken.py" 2>"$EXTRACT_ERR")"
@@ -120,51 +118,75 @@ if [ "${TEXT%%$'\n'*}" = "[[TTS_QUESTION]]" ]; then
   TEXT="${TEXT#*$'\n'}"
 fi
 
+# Nothing to say at all. Every path below wants this dropped.
+CHARS="${#TEXT}"
+if [ -z "${TEXT// }" ]; then
+  exit 0
+fi
 
-# --- Talky handoff ------------------------------------------------------
-# Offer the turn to the Talky hub, which serializes and attributes it across
-# the whole fleet. Deliberately ABOVE the minimum-characters floor and above
-# the condense: a short reply still has to reach the hub (it is what opens the
-# microphone window), and the hub picks its own condense backend.
+# --- Talky: hand the turn to the hub instead of speaking it here ---
+# Placed above both gates below, deliberately.
 #
-# Exit 0 means Talky owns this turn and will speak it. Anything else -- no hub
-# listening, a broken Talky, a subagent -- falls through to everything below,
-# which is the pre-Talky behavior unchanged. A dead hub costs attribution and
-# ordering, never the message.
-TALKY_SEND="/Users/mike/git/talky-dev/talky/talky_send.py"
-if [ -f "$TALKY_SEND" ] && [ "$(python3 - <<'PY' 2>/dev/null
-import sys
-sys.path.insert(0, "/Users/mike/git/talky-dev")
+# Above the condense: the `claude -p` call further down runs unconditionally,
+# so a shim placed after it would double-condense every item and make the hub's
+# own choice of summarizer unreachable. The hub gets the raw text and decides.
+#
+# Above the minimum-characters floor: that floor is right about what it was
+# written for -- a model call and 8s of latency are not worth spending on
+# "Done." -- but it gates the wrong verb. It stops the turn being condensed by
+# stopping it being spoken at all, and with it goes the hub ever being told the
+# turn happened. Anything Talky says opens the conversation and the microphone
+# window, so a turn dropped here does not merely go unheard: it leaves the user
+# with nothing to reply into until some longer turn reopens the channel. Talky
+# draws the same line itself, at CONDENSE_MIN_CHARS in talky/hub.py, and speaks
+# a short body unchanged rather than dropping it. So with Talky on, every turn
+# goes to the hub and the hub chooses -- the way questions already did here.
+#
+# Inert unless talky_enabled is true in the effective config, so with Talky off
+# this file behaves exactly as it did before: the floor below still drops the
+# short turn.
+# The checkout lives at ~/git/talky-dev on one machine and ~/code/talky-dev on
+# another; a hardcoded path silently turned the handoff off on the other one.
+TALKY_SEND=""
+for _d in "${TALKY_HOME:-}" "$HOME/git/talky-dev" "$HOME/code/talky-dev"; do
+  if [ -n "$_d" ] && [ -f "$_d/talky/talky_send.py" ]; then
+    TALKY_SEND="$_d/talky/talky_send.py"
+    break
+  fi
+done
+if [ "$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/tts'))
 try:
-    from talky import config
-    print("yes" if config.resolve().get("talky_enabled") else "no")
+    from tts_config import resolve
+    print('yes' if resolve()[0].get('talky_enabled') else 'no')
 except Exception:
-    print("no")
-PY
-)" = "yes" ]; then
+    print('no')
+" 2>/dev/null)" = "yes" ] && [ -n "$TALKY_SEND" ]; then
+  # --question is what tells the hub this turn ended by asking. It skips the
+  # condense (the extractor already reduced it to the question and its option
+  # labels) and records an open question, so an unmarked "yes" answers it.
   TALKY_ARGS=(--source stop)
   [ "$IS_QUESTION" = "yes" ] && TALKY_ARGS+=(--question)
-  if printf %s "$PAYLOAD" | PYTHONPATH="/Users/mike/git/talky-dev" python3 "$TALKY_SEND"        "${TALKY_ARGS[@]}" "$TEXT"; then
-    echo "$(date '+%H:%M:%S') handed to talky (${CHARS}ch)" >> "$LOG"
-    # The watermark is committed here for the same reason it is committed
-    # before speak.sh below: the text has been handed to something that will
-    # say it, so the next turn must not repeat it.
+  if printf %s "$PAYLOAD" | python3 "$TALKY_SEND" \
+       "${TALKY_ARGS[@]}" "$TEXT" 2>>"$LOG"; then
+    # Committed here because Talky now owns this text. Skipping the commit
+    # would re-deliver the same turn on the next Stop.
     if [ -n "$NEW_MARK" ]; then
       printf %s "$NEW_MARK" > "$WATERMARK_FILE" 2>/dev/null || true
     fi
+    echo "$(date '+%H:%M:%S') -> talky (${CHARS}ch)" >> "$LOG"
     exit 0
   fi
-  echo "$(date '+%H:%M:%S') talky declined, speaking locally" >> "$LOG"
+  echo "$(date '+%H:%M:%S') talky handoff failed, speaking locally" >> "$LOG"
 fi
 
-# Nothing to say, or too short to be worth a model call and 8s of latency.
+# Too short to be worth a model call and 8s of latency. Reached only when the
+# turn is being spoken locally -- Talky, above, has its own answer for a short
+# turn and does not want it dropped.
 # Questions skip the floor: a one-line question is the case most worth
 # speaking, and it is exactly the case the floor would filter out.
-CHARS="${#TEXT}"
 if [ "$IS_QUESTION" = "no" ] && [ "$CHARS" -lt "$SUMMARY_MIN_CHARS" ]; then
-  exit 0
-fi
-if [ -z "${TEXT// }" ]; then
   exit 0
 fi
 
